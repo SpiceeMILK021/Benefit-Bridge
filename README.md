@@ -2,7 +2,7 @@
 
 <img src="benefit_bridge_logo.png" alt="Benefit Bridge Logo" width="200">
 
-# 🌉 Benefit Bridge
+#Benefit Bridge
 ### *The Unified Gateway to Essential Support*
 
 [![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg?style=for-the-badge)](https://github.com/SpiceeMILK021/Benefit-Bridge/releases/tag/v1.0.0)
@@ -60,7 +60,10 @@ Benefit Bridge is available as a standalone executable for **Windows** and **mac
 1.  **Download**: Visit the [Official v1.0.0 Release](https://github.com/SpiceeMILK021/Benefit-Bridge/releases/tag/v1.0.0).
 2.  **Run**: 
     * **Windows**: Run the `.exe` file.
-    * **macOS**: Open the `.app` package (you may need to allow permissions in Security & Privacy).
+    * **macOS**: Open the `.app` package.
+    * a. You will get a warning that says "Apple could not verify 'BenefitBridge' is free of malware that may harm your Mac or compromise your privacy."
+    *    <img src="benefit_bridge_logo.png" alt="Benefit Bridge Logo" width="200">
+    *    
 3.  **Developers**: To run from source, ensure you are using **Python 3.12.0** and install `Pillow` for image support:
     ```bash
     pip install Pillow
