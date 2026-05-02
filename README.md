@@ -61,8 +61,8 @@ Benefit Bridge is available as a standalone executable for **Windows** and **mac
 2.  **Run**: 
     * **Windows**: Run the `.exe` file.
     * **macOS**: Open the `.app` package.
-    *  a. You will get a warning that says "Apple could not verify 'BenefitBridge' is free of malware that may harm your Mac or compromise your privacy."
-    *   <img src="error.png" width = 100>
+       *  a. You will get a warning that says "Apple could not verify 'BenefitBridge' is free of malware that may harm your Mac or compromise your privacy."
+       *   <img src="error.png" width = 200>
 3.  **Developers**: To run from source, ensure you are using **Python 3.12.0** and install `Pillow` for image support:
     ```bash
     pip install Pillow
