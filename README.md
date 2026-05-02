@@ -66,7 +66,7 @@ Benefit Bridge is available as a standalone executable for **Windows** and **mac
       
           <img src="error.png" width = 200>
        * To run the app, first double-click the app in your downloads to ensure that you are getting the warning.
-       * Then, after the warning pops up, close it and go to your MacBook's Privacy and Security Settings. Scroll down, and you will see a button labeled "Open Anyway". After clicking the button, you should be able to run the app normally. (Note: Before the initial run of the app, it may prompt for your password once more as confirmation. Afterward, the app should run smoothly with no further prompts.)
+       * Then, after the warning pops up, close it and go to your MacBook's Privacy and Security Settings. Scroll down, and you will see a button labeled "Open Anyway" next to text that says, "'Benefit Bridge' was blocked to protect your Mac." After clicking the button, you should be able to run the app normally. (Note: Before the initial run of the app, it may prompt for your password once more as confirmation. Afterward, the app should run smoothly with no further prompts.)
      
          
          <img src="help1.png" width = 200> <img src="help2.png" width = 225>
