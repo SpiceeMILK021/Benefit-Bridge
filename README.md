@@ -78,7 +78,7 @@ Benefit Bridge is available as a standalone executable for **Windows** and **mac
 
 ---
 
-## ⌨️ Power User Shortcuts
+##  Power User Shortcuts
 
 <div align="center">
 
