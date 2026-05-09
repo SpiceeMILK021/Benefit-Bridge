@@ -2,7 +2,6 @@
 
 # Lets us use newer type-hint styles (like `list[str]`) on older Python.
 from __future__ import annotations
-#test comment
 
 # Tools we use throughout the file:
 import csv          # for saving the case history spreadsheet
@@ -85,454 +84,557 @@ EXPORT_DIR = APP_DIR / "exports"
 BRAND_SLOGAN = "You're Closer Than You Think"
 
 
-# The five programs the app knows about. Each one has:
-#   - "name": full title shown to the user
-#   - "short_name": short tag used in lists and pills
-#   - "description": one-line explanation
-#   - "color": accent color for the swatch next to the checkbox
+# ===========================================================================
+# PROGRAM DEFINITIONS
+# ---------------------------------------------------------------------------
+# The five assistance programs this app can screen for.
+# This dict is the single source of truth for program names, descriptions,
+# and display colors. Every other part of the code references this dict
+# by key (e.g. "food", "childcare") rather than repeating the display text.
+#
+# Keys inside each program:
+#   "name"        — Full title shown on the step 1 checkboxes and result cards.
+#   "short_name"  — Short label used inside pills, lists, and compact spaces.
+#   "description" — One-line plain-English description shown in tooltips/cards.
+#   "color"       — Hex accent color for the colored swatch beside the checkbox.
+# ===========================================================================
 PROGRAMS = {
+    # ── Child care ────────────────────────────────────────────────────────
+    # Federal/state subsidy programs like CCDF that help working parents
+    # pay for licensed daycare or after-school care.
     "childcare": {
         "name": "Child-care subsidy",
         "short_name": "Child care",
         "description": "Help paying for licensed care while a parent works or studies.",
-        "color": "#14b8a6",
+        "color": "#14b8a6",   # teal
     },
+    # ── Food ─────────────────────────────────────────────────────────────
+    # Covers SNAP (food stamps) and WIC. Both are checked simultaneously
+    # in food_eligibility() using state-specific income limits.
     "food": {
         "name": "Food assistance / SNAP-like program",
         "short_name": "Food",
         "description": "Monthly grocery support for households under income limits.",
-        "color": "#3b82f6",
+        "color": "#3b82f6",   # blue
     },
+    # ── Utility ──────────────────────────────────────────────────────────
+    # Programs like LIHEAP that help households pay electric, gas, or water
+    # bills — especially if they have a shutoff notice.
     "utility": {
         "name": "Utility bill help",
         "short_name": "Utilities",
         "description": "Energy, water, or emergency bill support.",
-        "color": "#f97316",
+        "color": "#f97316",   # orange
     },
+    # ── Internet ─────────────────────────────────────────────────────────
+    # Programs like ACP (Affordable Connectivity Program) that subsidize
+    # home internet for low-income households.
     "internet": {
         "name": "Internet subsidy",
         "short_name": "Internet",
         "description": "Low-cost internet or digital access support.",
-        "color": "#8b5cf6",
+        "color": "#8b5cf6",   # purple
     },
+    # ── Transportation ────────────────────────────────────────────────────
+    # State transit voucher programs — bus passes, rideshare credits, or
+    # medical transport help for work, school, or appointments.
     "transportation": {
         "name": "Other: transportation vouchers",
         "short_name": "Transport",
         "description": "Transit passes or rides for work, school, or medical needs.",
-        "color": "#f43f5e",
+        "color": "#f43f5e",   # rose/red
     },
 }
 
-# Income limits for child care, by household size (1 person = $4,300/month, etc.).
-# These are sample numbers — not real government limits.
-CHILDCARE_LIMITS = {
-    1: 4300,
-    2: 5600,
-    3: 6900,
-    4: 8200,
-    5: 9500,
-    6: 10800,
-    7: 12100,
-    8: 13400,
+
+
+# ===========================================================================
+# FEDERAL POVERTY LINE (FPL) TABLES
+# ---------------------------------------------------------------------------
+# The FPL is a number the US government publishes every year that defines
+# what "poverty" means for a given household size. Programs use a multiple
+# of it (like 130%, 185%, 200%) as their income cutoff.
+#
+# These are MONTHLY dollar amounts (annual FPL ÷ 12), rounded.
+# Key: household size (number of people). Value: monthly income limit in $.
+# ===========================================================================
+
+# 100% FPL — the raw poverty line. Most programs use a multiple of this.
+# Example: a family of 4 earning $2,750/month or less is at 100% FPL.
+FPL_BASE_LIMITS = {
+    1: 1330,
+    2: 1803,
+    3: 2276.5,
+    4: 2750,
+    5: 3223,
+    6: 3696.5,
+    7: 4170,
+    8: 4643,
 }
 
-# Income limits for food and internet (based on 200% of the federal poverty line).
-FPL_200_LIMITS = {
-    1: 2510,
-    2: 3407,
-    3: 4303,
-    4: 5200,
-    5: 6097,
-    6: 6993,
-    7: 7890,
-    8: 8787,
+# 200% FPL — double the poverty line. Used for internet subsidies.
+# Example: family of 4 limit becomes $5,500/month.
+FPL_200_LIMITS = {size: amount * 2 for size, amount in FPL_BASE_LIMITS.items()}
+
+# 150% FPL — one-and-a-half times the poverty line. Used as a floor for utility programs.
+FPL_150_LIMITS = {size: amount * 1.5 for size, amount in FPL_BASE_LIMITS.items()}
+
+# Alias so food eligibility code can reference the base as "FPL_100" for clarity.
+FPL_100_LIMITS = FPL_BASE_LIMITS
+
+# ---------------------------------------------------------------------------
+# Alaska and Hawaii FPL tables
+# ---------------------------------------------------------------------------
+# The federal government publishes SEPARATE, HIGHER FPL numbers for Alaska
+# and Hawaii because the cost of living there is significantly higher than
+# the continental US. Alaska is ~25% higher; Hawaii is ~15% higher.
+# These are the 100% FPL monthly values for those two states.
+# The per-person "extra" amount is added for households larger than 8 people.
+# ---------------------------------------------------------------------------
+
+ALASKA_FPL_BASE = {1: 1662, 2: 2254, 3: 2846, 4: 3438, 5: 4030, 6: 4622, 7: 5214, 8: 5806}
+ALASKA_FPL_EXTRA_PERSON = 592   # add this per person beyond 8
+
+HAWAII_FPL_BASE = {1: 1528, 2: 2073, 3: 2618, 4: 3163, 5: 3708, 6: 4253, 7: 4798, 8: 5343}
+HAWAII_FPL_EXTRA_PERSON = 545   # add this per person beyond 8
+
+# ---------------------------------------------------------------------------
+# SNAP Gross Income Test Multipliers by State (2026 BBCE Rules)
+# ---------------------------------------------------------------------------
+# SNAP (food stamps) has a federal gross income test at 130% FPL. However,
+# most states have adopted "Broad-Based Categorical Eligibility" (BBCE),
+# which lets them raise that ceiling. This dict maps each state to its
+# actual multiplier. States NOT listed here use the 200% default (the most
+# generous tier, used by big states like CA, NY, FL, etc.).
+#
+# Example: Texas uses 1.65, so a family of 4 can earn up to
+#   $2,750 (100% FPL) × 1.65 = $4,537/month and still qualify for SNAP.
+# ---------------------------------------------------------------------------
+SNAP_STATE_MULTIPLIERS: dict[str, float] = {
+    # 130% — strictest states; use the federal minimum with no BBCE expansion
+    "Alabama": 1.30, "Arkansas": 1.30, "Georgia": 1.30, "Idaho": 1.30,
+    "Indiana": 1.30, "Kansas": 1.30, "Mississippi": 1.30, "Missouri": 1.30,
+    "Ohio": 1.30, "Oklahoma": 1.30, "South Carolina": 1.30, "South Dakota": 1.30,
+    "Tennessee": 1.30, "Utah": 1.30, "Wyoming": 1.30,
+    # 160%
+    "Iowa": 1.60,
+    # 165%
+    "Illinois": 1.65, "Nebraska": 1.65, "Texas": 1.65,
+    # 185%
+    "Arizona": 1.85, "New Jersey": 1.85, "Rhode Island": 1.85, "Vermont": 1.85,
+    # All other states (CA, NY, FL, WA, etc.) default to 2.00 — see food_eligibility()
 }
 
-# Income limits for utility help, by household size.
-UTILITY_LIMITS = {
-    1: 2950,
-    2: 3860,
-    3: 4770,
-    4: 5680,
-    5: 6590,
-    6: 7500,
-    7: 8410,
-    8: 9320,
+
+
+
+
+# ---------------------------------------------------------------------------
+# Extra-person amounts
+# ---------------------------------------------------------------------------
+# The FPL tables above only go up to 8 people. For households larger than 8,
+# we extend the table by adding a fixed dollar amount for each extra person.
+# These are the 100% FPL "per additional person" amounts, used as a base.
+# Food uses this directly; internet doubles it (since it uses 200% FPL).
+# ---------------------------------------------------------------------------
+FPL_BASE_EXTRA_PERSON_AMOUNTS = {
+    "food": 473,       # $473/month per person beyond 8, at 100% FPL
+    "internet": 473,   # same base — will be doubled for 200% FPL below
 }
 
-# Income limits for transportation vouchers, by household size.
-TRANSPORTATION_LIMITS = {
-    1: 2200,
-    2: 2980,
-    3: 3760,
-    4: 4550,
-    5: 5330,
-    6: 6120,
-    7: 6900,
-    8: 7690,
+# 200% versions of the above — used by internet subsidy calculations.
+FPL_EXTRA_PERSON_AMOUNTS = {program: amount * 2 for program, amount in FPL_BASE_EXTRA_PERSON_AMOUNTS.items()}
+
+# 150% version of the food extra-person amount — used by the utility floor calculation.
+FPL_150_EXTRA_PERSON_AMOUNT = FPL_BASE_EXTRA_PERSON_AMOUNTS["food"] * 1.5
+
+# ---------------------------------------------------------------------------
+# State-specific extra-person increments (for childcare, utility, transportation)
+# ---------------------------------------------------------------------------
+# When a household has more than 8 people, we look up how much to add per
+# extra person from this table. These are derived from real state program data:
+#   - Childcare: from CCDF 2025 (difference between family-of-4 and family-of-3 limits)
+#   - Utility: estimated from LIHEAP state data
+#   - Transportation: estimated from state transit-assistance data
+# Food and internet are NOT in this table — food uses SNAP logic, internet uses
+# the federal 200% FPL amount above.
+# ---------------------------------------------------------------------------
+STATE_EXTRA_PERSON_AMOUNTS: dict[str, dict[str, int]] = {
+    "Alabama": {"childcare": 771, "utility": 154, "transportation": 700},
+    "Alaska": {"childcare": 1180, "utility": 209, "transportation": 1000},
+    "Arizona": {"childcare": 706, "utility": 169, "transportation": 800},
+    "Arkansas": {"childcare": 982, "utility": 142, "transportation": 700},
+    "California": {"childcare": 1240, "utility": 200, "transportation": 790},
+    "Colorado": {"childcare": 792, "utility": 218, "transportation": 800},
+    "Connecticut": {"childcare": 1167, "utility": 234, "transportation": 800},
+    "Delaware": {"childcare": 792, "utility": 194, "transportation": 780},
+    "District of Columbia": {"childcare": 1345, "utility": 303, "transportation": 900},
+    "Florida": {"childcare": 642, "utility": 162, "transportation": 780},
+    "Georgia": {"childcare": 635, "utility": 173, "transportation": 750},
+    "Hawaii": {"childcare": 1182, "utility": 208, "transportation": 1100},
+    "Idaho": {"childcare": 749, "utility": 164, "transportation": 750},
+    "Illinois": {"childcare": 1009, "utility": 199, "transportation": 800},
+    "Indiana": {"childcare": 672, "utility": 167, "transportation": 750},
+    "Iowa": {"childcare": 717, "utility": 183, "transportation": 750},
+    "Kansas": {"childcare": 1115, "utility": 177, "transportation": 750},
+    "Kentucky": {"childcare": 1091, "utility": 156, "transportation": 700},
+    "Louisiana": {"childcare": 985, "utility": 151, "transportation": 700},
+    "Maine": {"childcare": 1745, "utility": 183, "transportation": 750},
+    "Maryland": {"childcare": 1201, "utility": 237, "transportation": 800},
+    "Massachusetts": {"childcare": 970, "utility": 258, "transportation": 850},
+    "Michigan": {"childcare": 856, "utility": 180, "transportation": 750},
+    "Minnesota": {"childcare": 787, "utility": 222, "transportation": 800},
+    "Mississippi": {"childcare": 823, "utility": 135, "transportation": 700},
+    "Missouri": {"childcare": 642, "utility": 170, "transportation": 750},
+    "Montana": {"childcare": 829, "utility": 174, "transportation": 750},
+    "Nebraska": {"childcare": 792, "utility": 183, "transportation": 750},
+    "Nevada": {"childcare": 525, "utility": 158, "transportation": 800},
+    "New Hampshire": {"childcare": 1513, "utility": 234, "transportation": 800},
+    "New Jersey": {"childcare": 897, "utility": 247, "transportation": 850},
+    "New Mexico": {"childcare": 1793, "utility": 139, "transportation": 700},
+    "New York": {"childcare": 1449, "utility": 206, "transportation": 850},
+    "North Carolina": {"childcare": 857, "utility": 170, "transportation": 750},
+    "North Dakota": {"childcare": 1232, "utility": 199, "transportation": 750},
+    "Ohio": {"childcare": 621, "utility": 177, "transportation": 750},
+    "Oklahoma": {"childcare": 1020, "utility": 145, "transportation": 700},
+    "Oregon": {"childcare": 896, "utility": 194, "transportation": 800},
+    "Pennsylvania": {"childcare": 897, "utility": 195, "transportation": 800},
+    "Rhode Island": {"childcare": 897, "utility": 209, "transportation": 850},
+    "South Carolina": {"childcare": 1113, "utility": 160, "transportation": 700},
+    "South Dakota": {"childcare": 936, "utility": 177, "transportation": 750},
+    "Tennessee": {"childcare": 1115, "utility": 158, "transportation": 700},
+    "Texas": {"childcare": 1170, "utility": 168, "transportation": 750},
+    "Utah": {"childcare": 1265, "utility": 184, "transportation": 750},
+    "Vermont": {"childcare": 1793, "utility": 203, "transportation": 800},
+    "Virginia": {"childcare": 1519, "utility": 215, "transportation": 750},
+    "Washington": {"childcare": 963, "utility": 220, "transportation": 800},
+    "West Virginia": {"childcare": 1028, "utility": 147, "transportation": 700},
+    "Wisconsin": {"childcare": 897, "utility": 192, "transportation": 750},
+    "Wyoming": {"childcare": 785, "utility": 172, "transportation": 750},
 }
 
-# State-specific income limits (monthly gross income). Each state has its own set of
-# limits for each program. Food and internet use 200% FPL (federal, uniform).
-# Childcare limits approximate CCDF eligibility (85% of state median income).
-# Utility limits approximate LIHEAP eligibility (150-200% FPL or 60% SMI).
-# Transportation limits approximate state transit-assistance program thresholds.
+# ===========================================================================
+# STATE INCOME LIMITS TABLE
+# ---------------------------------------------------------------------------
+# This is the main lookup table the app uses to decide if someone qualifies.
+# For each state, it stores the monthly gross income limits for each program.
+#
+# How to read it: if a family of 4 in Alabama earns less than $4,500/month,
+# they are under the childcare limit for Alabama.
+#
+# Sources:
+#   - Childcare:      CCDF eligibility thresholds (2026)
+#   - Utility:        LIHEAP — higher of 150% FPL or 60% State Median Income
+#   - Internet:       200% FPL (federal, uniform across all states)
+#   - Transportation: State transit-assistance program thresholds (estimated)
+#   - Food:           NOT in this table — handled separately by food_eligibility()
+#                     using SNAP_STATE_MULTIPLIERS and the FPL tables above.
+# ===========================================================================
 STATE_LIMITS = {
     "Alabama": {
-        "childcare":      {1: 3300, 2: 4400, 3: 5500, 4: 6600, 5: 7700, 6: 8800, 7: 9900,  8: 11000},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2187, 2: 2958, 3: 3729, 4: 4500, 5: 5271, 6: 6042, 7: 6813, 8: 7584},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2510, 2: 3407, 3: 4303, 4: 5200, 5: 6097, 6: 6993, 7: 7890,  8: 8787},
+        "utility":        {1: 2662, 2: 3481, 3: 4300, 4: 5119, 5: 5938, 6: 6757, 7: 6910,  8: 7064},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400, 7: 6100,  8: 6800},
     },
     "Alaska": {
-        "childcare":      {1: 5100, 2: 6700, 3: 8300, 4: 9900, 5: 11500, 6: 13100, 7: 14700, 8: 16300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3832, 2: 5012, 3: 6192, 4: 7372, 5: 8552, 6: 9732, 7: 10912, 8: 12092},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 4200, 2: 5600, 3: 7000, 4: 8400, 5: 9800,  6: 11200, 7: 12600, 8: 14000},
+        "utility":        {1: 3620, 2: 4734, 3: 5848, 4: 6962, 5: 8076,  6: 9190,  7: 9399,  8: 9608},
         "transportation": {1: 2800, 2: 3800, 3: 4800, 4: 5800, 5: 6800,  6: 7800,  7: 8800,  8: 9800},
     },
     "Arizona": {
-        "childcare":      {1: 3700, 2: 4900, 3: 6100, 4: 7300, 5: 8500, 6: 9700,  7: 10900, 8: 12100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2007, 2: 2713, 3: 3419, 4: 4125, 5: 4831, 6: 5537, 7: 6243, 8: 6949},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 2937, 2: 3840, 3: 4744, 4: 5647, 5: 6551, 6: 7454,  7: 7624,  8: 7793},
         "transportation": {1: 2100, 2: 2900, 3: 3700, 4: 4500, 5: 5300, 6: 6100,  7: 6900,  8: 7700},
     },
     "Arkansas": {
-        "childcare":      {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3187, 2: 4169, 3: 5151, 4: 6133, 5: 7115, 6: 8097, 7: 9079, 8: 10061},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2400, 2: 3300, 3: 4200, 4: 5100, 5: 6000, 6: 6900,  7: 7800,  8: 8700},
+        "utility":        {1: 2460, 2: 3217, 3: 3974, 4: 4731, 5: 5488, 6: 6245,  7: 6387,  8: 6529},
         "transportation": {1: 1800, 2: 2500, 3: 3200, 4: 3900, 5: 4600, 6: 5300,  7: 6000,  8: 6700},
     },
     "California": {
-        "childcare":      CHILDCARE_LIMITS,
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 4992, 2: 6232, 3: 7472, 4: 8712, 5: 9952, 6: 11192, 7: 12432, 8: 13672},
         "internet":       FPL_200_LIMITS,
-        "utility":        UTILITY_LIMITS,
-        "transportation": TRANSPORTATION_LIMITS,
+        "utility":        {1: 3459, 2: 4523, 3: 5587, 4: 6651, 5: 7715, 6: 8779, 7: 8979, 8: 9178},
+        "transportation": {1: 2200, 2: 2980, 3: 3760, 4: 4550, 5: 5330, 6: 6120, 7: 6900, 8: 7690},
     },
     "Colorado": {
-        "childcare":      {1: 4700, 2: 6100, 3: 7500, 4: 8900, 5: 10300, 6: 11700, 7: 13100, 8: 14500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2249, 2: 3041, 3: 3833, 4: 4625, 5: 5417, 6: 6209, 7: 7001, 8: 7793},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3200, 2: 4200, 3: 5200, 4: 6200, 5: 7200,  6: 8200,  7: 9200,  8: 10200},
+        "utility":        {1: 3775, 2: 4936, 3: 6097, 4: 7259, 5: 8420,  6: 9582,  7: 9799,  8: 10017},
         "transportation": {1: 2400, 2: 3200, 3: 4000, 4: 4800, 5: 5600,  6: 6400,  7: 7200,  8: 8000},
     },
     "Connecticut": {
-        "childcare":      {1: 5000, 2: 6400, 3: 7800, 4: 9200, 5: 10600, 6: 12000, 7: 13400, 8: 14800},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3792, 2: 4959, 3: 6126, 4: 7293, 5: 8460, 6: 9627, 7: 10794, 8: 11961},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300,  6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 4060, 2: 5309, 3: 6558, 4: 7807, 5: 9056,  6: 10305, 7: 10539, 8: 10773},
         "transportation": {1: 2500, 2: 3300, 3: 4100, 4: 4900, 5: 5700,  6: 6500,  7: 7300,  8: 8100},
     },
     "Delaware": {
-        "childcare":      {1: 4000, 2: 5200, 3: 6400, 4: 7600, 5: 8800, 6: 10000, 7: 11200, 8: 12400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2249, 2: 3041, 3: 3833, 4: 4625, 5: 5417, 6: 6209, 7: 7001, 8: 7793},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2900, 2: 3900, 3: 4900, 4: 5900, 5: 6900, 6: 7900,  7: 8900,  8: 9900},
+        "utility":        {1: 3365, 2: 4400, 3: 5436, 4: 6471, 5: 7507, 6: 8542,  7: 8736,  8: 8930},
         "transportation": {1: 2200, 2: 3000, 3: 3800, 4: 4600, 5: 5400, 6: 6200,  7: 7000,  8: 7800},
     },
     "District of Columbia": {
-        "childcare":      {1: 5500, 2: 7000, 3: 8500, 4: 10000, 5: 11500, 6: 13000, 7: 14500, 8: 16000},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3765, 2: 5110, 3: 6455, 4: 7800, 5: 9145, 6: 10490, 7: 11835, 8: 13180},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3500, 2: 4600, 3: 5700, 4: 6800,  5: 7900,  6: 9000,  7: 10100, 8: 11200},
+        "utility":        {1: 5252, 2: 6868, 3: 8484, 4: 10100, 5: 11716, 6: 13332, 7: 13635, 8: 13938},
         "transportation": {1: 2700, 2: 3600, 3: 4500, 4: 5400,  5: 6300,  6: 7200,  7: 8100,  8: 9000},
     },
     "Florida": {
-        "childcare":      {1: 3600, 2: 4700, 3: 5800, 4: 6900, 5: 8000, 6: 9100,  7: 10200, 8: 11300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 1824, 2: 2466, 3: 3108, 4: 3750, 5: 4392, 6: 5034, 7: 5676, 8: 6318},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 2811, 2: 3676, 3: 4541, 4: 5406, 5: 6271, 6: 7136,  7: 7298,  8: 7460},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Georgia": {
-        "childcare":      {1: 3500, 2: 4600, 3: 5700, 4: 6800, 5: 7900, 6: 9000,  7: 10100, 8: 11200},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2063, 2: 2698, 3: 3333, 4: 3968, 5: 4603, 6: 5238, 7: 5873, 8: 6508},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2993, 2: 3914, 3: 4835, 4: 5756, 5: 6677, 6: 7598,  7: 7770,  8: 7943},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Hawaii": {
-        "childcare":      {1: 4900, 2: 6300, 3: 7700, 4: 9100, 5: 10500, 6: 11900, 7: 13300, 8: 14700},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3838, 2: 5020, 3: 6202, 4: 7384, 5: 8566, 6: 9748, 7: 10930, 8: 12112},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300,  6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 3600, 2: 4708, 3: 5815, 4: 6923, 5: 8031,  6: 9138,  7: 9346,  8: 9554},
         "transportation": {1: 2500, 2: 3300, 3: 4100, 4: 4900, 5: 5700,  6: 6500,  7: 7300,  8: 8100},
     },
     "Idaho": {
-        "childcare":      {1: 3500, 2: 4600, 3: 5700, 4: 6800, 5: 7900, 6: 9000,  7: 10100, 8: 11200},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2128, 2: 2877, 3: 3626, 4: 4375, 5: 5124, 6: 5873, 7: 6622, 8: 7371},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2836, 2: 3708, 3: 4581, 4: 5454, 5: 6326, 6: 7199,  7: 7362,  8: 7526},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "Illinois": {
-        "childcare":      {1: 4100, 2: 5300, 3: 6500, 4: 7700, 5: 8900, 6: 10100, 7: 11300, 8: 12500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2823, 2: 3832, 3: 4841, 4: 5850, 5: 6859, 6: 7868, 7: 8877, 8: 9886},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
+        "utility":        {1: 3441, 2: 4500, 3: 5558, 4: 6617, 5: 7676, 6: 8735,  7: 8933,  8: 9132},
         "transportation": {1: 2200, 2: 3000, 3: 3800, 4: 4600, 5: 5400, 6: 6200,  7: 7000,  8: 7800},
     },
     "Indiana": {
-        "childcare":      {1: 3600, 2: 4700, 3: 5800, 4: 6900, 5: 8000, 6: 9100,  7: 10200, 8: 11300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 1884, 2: 2556, 3: 3228, 4: 3900, 5: 4572, 6: 5244, 7: 5916, 8: 6588},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 2886, 2: 3774, 3: 4662, 4: 5551, 5: 6439, 6: 7327,  7: 7493,  8: 7660},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Iowa": {
-        "childcare":      {1: 3700, 2: 4800, 3: 5900, 4: 7000, 5: 8100, 6: 9200,  7: 10300, 8: 11400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2009, 2: 2726, 3: 3443, 4: 4160, 5: 4877, 6: 5594, 7: 6311, 8: 7028},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2800, 2: 3700, 3: 4600, 4: 5500, 5: 6400, 6: 7300,  7: 8200,  8: 9100},
+        "utility":        {1: 3179, 2: 4157, 3: 5135, 4: 6113, 5: 7092, 6: 8070,  7: 8253,  8: 8437},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Kansas": {
-        "childcare":      {1: 3700, 2: 4800, 3: 5900, 4: 7000, 5: 8100, 6: 9200,  7: 10300, 8: 11400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3621, 2: 4736, 3: 5851, 4: 6966, 5: 8081, 6: 9196, 7: 10311, 8: 11426},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 3061, 2: 4003, 3: 4945, 4: 5887, 5: 6829, 6: 7771,  7: 7947,  8: 8124},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Kentucky": {
-        "childcare":      {1: 3200, 2: 4200, 3: 5200, 4: 6200, 5: 7200, 6: 8200,  7: 9200,  8: 10200},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3549, 2: 4640, 3: 5731, 4: 6822, 5: 7913, 6: 9004, 7: 10095, 8: 11186},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2500, 2: 3400, 3: 4300, 4: 5200, 5: 6100, 6: 7000,  7: 7900,  8: 8800},
+        "utility":        {1: 2707, 2: 3540, 3: 4374, 4: 5207, 5: 6040, 6: 6873,  7: 7029,  8: 7185},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "Louisiana": {
-        "childcare":      {1: 3100, 2: 4100, 3: 5100, 4: 6100, 5: 7100, 6: 8100,  7: 9100,  8: 10100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3203, 2: 4188, 3: 5173, 4: 6158, 5: 7143, 6: 8128, 7: 9113, 8: 10098},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2500, 2: 3400, 3: 4300, 4: 5200, 5: 6100, 6: 7000,  7: 7900,  8: 8800},
+        "utility":        {1: 2617, 2: 3422, 3: 4227, 4: 5032, 5: 5837, 6: 6642,  7: 6793,  8: 6944},
         "transportation": {1: 1800, 2: 2500, 3: 3200, 4: 3900, 5: 4600, 6: 5300,  7: 6000,  8: 6700},
     },
     "Maine": {
-        "childcare":      {1: 4100, 2: 5300, 3: 6500, 4: 7700, 5: 8900, 6: 10100, 7: 11300, 8: 12500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 5673, 2: 7418, 3: 9163, 4: 10908, 5: 12653, 6: 14398, 7: 16143, 8: 17888},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3200, 2: 4200, 3: 5200, 4: 6200, 5: 7200, 6: 8200,  7: 9200,  8: 10200},
+        "utility":        {1: 3173, 2: 4149, 3: 5125, 4: 6101, 5: 7077, 6: 8053,  7: 8236,  8: 8419},
         "transportation": {1: 2200, 2: 3000, 3: 3800, 4: 4600, 5: 5400, 6: 6200,  7: 7000,  8: 7800},
     },
     "Maryland": {
-        "childcare":      {1: 5000, 2: 6400, 3: 7800, 4: 9200, 5: 10600, 6: 12000, 7: 13400, 8: 14800},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3900, 2: 5101, 3: 6302, 4: 7503, 5: 8704, 6: 9905, 7: 11106, 8: 12307},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300,  6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 4113, 2: 5378, 3: 6644, 4: 7909, 5: 9175,  6: 10440, 7: 10678, 8: 10915},
         "transportation": {1: 2500, 2: 3300, 3: 4100, 4: 4900, 5: 5700,  6: 6500,  7: 7300,  8: 8100},
     },
     "Massachusetts": {
-        "childcare":      {1: 5200, 2: 6700, 3: 8200, 4: 9700, 5: 11200, 6: 12700, 7: 14200, 8: 15700},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3152, 2: 4122, 3: 5092, 4: 6062, 5: 7032, 6: 8002, 7: 8972, 8: 9942},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3400, 2: 4500, 3: 5600, 4: 6700, 5: 7800,  6: 8900,  7: 10000, 8: 11100},
+        "utility":        {1: 4465, 2: 5839, 3: 7213, 4: 8587, 5: 9961,  6: 11335, 7: 11593, 8: 11851},
         "transportation": {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200,  6: 7100,  7: 8000,  8: 8900},
     },
     "Michigan": {
-        "childcare":      {1: 3700, 2: 4800, 3: 5900, 4: 7000, 5: 8100, 6: 9200,  7: 10300, 8: 11400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2432, 2: 3288, 3: 4144, 4: 5000, 5: 5856, 6: 6712, 7: 7568, 8: 8424},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2900, 2: 3900, 3: 4900, 4: 5900, 5: 6900, 6: 7900,  7: 8900,  8: 9900},
+        "utility":        {1: 3114, 2: 4073, 3: 5031, 4: 5989, 5: 6948, 6: 7906,  7: 8085,  8: 8265},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Minnesota": {
-        "childcare":      {1: 4500, 2: 5800, 3: 7100, 4: 8400, 5: 9700, 6: 11000, 7: 12300, 8: 13600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2560, 2: 3347, 3: 4134, 4: 4921, 5: 5708, 6: 6495, 7: 7282, 8: 8069},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300, 6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 3846, 2: 5030, 3: 6213, 4: 7397, 5: 8580, 6: 9764,  7: 9986,  8: 10208},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "Mississippi": {
-        "childcare":      {1: 2900, 2: 3900, 3: 4900, 4: 5900, 5: 6900, 6: 7900,  7: 8900,  8: 9900},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2676, 2: 3499, 3: 4322, 4: 5145, 5: 5968, 6: 6791, 7: 7614, 8: 8437},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2400, 2: 3300, 3: 4200, 4: 5100, 5: 6000, 6: 6900,  7: 7800,  8: 8700},
+        "utility":        {1: 2341, 2: 3061, 3: 3781, 4: 4501, 5: 5221, 6: 5942,  7: 6077,  8: 6212},
         "transportation": {1: 1700, 2: 2300, 3: 2900, 4: 3500, 5: 4100, 6: 4700,  7: 5300,  8: 5900},
     },
     "Missouri": {
-        "childcare":      {1: 3500, 2: 4600, 3: 5700, 4: 6800, 5: 7900, 6: 9000,  7: 10100, 8: 11200},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 1824, 2: 2466, 3: 3108, 4: 3750, 5: 4392, 6: 5034, 7: 5676, 8: 6318},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2942, 2: 3847, 3: 4752, 4: 5657, 5: 6562, 6: 7467,  7: 7637,  8: 7806},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "Montana": {
-        "childcare":      {1: 3600, 2: 4700, 3: 5800, 4: 6900, 5: 8000, 6: 9100,  7: 10200, 8: 11300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2323, 2: 3152, 3: 3981, 4: 4810, 5: 5639, 6: 6468, 7: 7297, 8: 8126},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2800, 2: 3700, 3: 4600, 4: 5500, 5: 6400, 6: 7300,  7: 8200,  8: 9100},
+        "utility":        {1: 3010, 2: 3936, 3: 4862, 4: 5789, 5: 6715, 6: 7641,  7: 7815,  8: 7988},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Nebraska": {
-        "childcare":      {1: 3800, 2: 4900, 3: 6000, 4: 7100, 5: 8200, 6: 9300,  7: 10400, 8: 11500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2249, 2: 3041, 3: 3833, 4: 4625, 5: 5417, 6: 6209, 7: 7001, 8: 7793},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 3168, 2: 4143, 3: 5117, 4: 6092, 5: 7067, 6: 8042,  7: 8224,  8: 8407},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Nevada": {
-        "childcare":      {1: 3900, 2: 5000, 3: 6100, 4: 7200, 5: 8300, 6: 9400,  7: 10500, 8: 11600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 1706, 2: 2231, 3: 2756, 4: 3281, 5: 3806, 6: 4331, 7: 4856, 8: 5381},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2800, 2: 3700, 3: 4600, 4: 5500, 5: 6400, 6: 7300,  7: 8200,  8: 9100},
+        "utility":        {1: 2731, 2: 3571, 3: 4411, 4: 5251, 5: 6092, 6: 6932,  7: 7089,  8: 7247},
         "transportation": {1: 2100, 2: 2900, 3: 3700, 4: 4500, 5: 5300, 6: 6100,  7: 6900,  8: 7700},
     },
     "New Hampshire": {
-        "childcare":      {1: 4700, 2: 6100, 3: 7500, 4: 8900, 5: 10300, 6: 11700, 7: 13100, 8: 14500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 4914, 2: 6427, 3: 7940, 4: 9453, 5: 10966, 6: 12479, 7: 13992, 8: 15505},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3200, 2: 4200, 3: 5200, 4: 6200, 5: 7200,  6: 8200,  7: 9200,  8: 10200},
+        "utility":        {1: 4059, 2: 5309, 3: 6558, 4: 7807, 5: 9056,  6: 10305, 7: 10539, 8: 10773},
         "transportation": {1: 2400, 2: 3200, 3: 4000, 4: 4800, 5: 5600,  6: 6400,  7: 7200,  8: 8000},
     },
     "New Jersey": {
-        "childcare":      {1: 5200, 2: 6700, 3: 8200, 4: 9700, 5: 11200, 6: 12700, 7: 14200, 8: 15700},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2509, 2: 3406, 3: 4303, 4: 5200, 5: 6097, 6: 6994, 7: 7891, 8: 8788},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3400, 2: 4500, 3: 5600, 4: 6700, 5: 7800,  6: 8900,  7: 10000, 8: 11100},
+        "utility":        {1: 4273, 2: 5587, 3: 6902, 4: 8217, 5: 9532,  6: 10846, 7: 11093, 8: 11339},
         "transportation": {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200,  6: 7100,  7: 8000,  8: 8900},
     },
     "New Mexico": {
-        "childcare":      {1: 3500, 2: 4600, 3: 5700, 4: 6800, 5: 7900, 6: 9000,  7: 10100, 8: 11200},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 5021, 2: 6814, 3: 8607, 4: 10400, 5: 12193, 6: 13986, 7: 15779, 8: 17572},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2405, 2: 3144, 3: 3884, 4: 4624, 5: 5364, 6: 6104,  7: 6243,  8: 6381},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "New York": {
-        "childcare":      {1: 4500, 2: 5800, 3: 7100, 4: 8400, 5: 9700, 6: 11000, 7: 12300, 8: 13600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 4706, 2: 6155, 3: 7604, 4: 9053, 5: 10502, 6: 11951, 7: 13400, 8: 14849},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3100, 2: 4000, 3: 4900, 4: 5800, 5: 6700, 6: 7600,  7: 8500,  8: 9400},
+        "utility":        {1: 3563, 2: 4660, 3: 5756, 4: 6853, 5: 7949, 6: 9045,  7: 9251,  8: 9456},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "North Carolina": {
-        "childcare":      {1: 3600, 2: 4700, 3: 5800, 4: 6900, 5: 8000, 6: 9100,  7: 10200, 8: 11300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2429, 2: 3286, 3: 4143, 4: 5000, 5: 5857, 6: 6714, 7: 7571, 8: 8428},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2938, 2: 3842, 3: 4746, 4: 5650, 5: 6554, 6: 7458,  7: 7628,  8: 7797},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "North Dakota": {
-        "childcare":      {1: 4000, 2: 5200, 3: 6400, 4: 7600, 5: 8800, 6: 10000, 7: 11200, 8: 12400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3999, 2: 5231, 3: 6463, 4: 7695, 5: 8927, 6: 10159, 7: 11391, 8: 12623},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
+        "utility":        {1: 3446, 2: 4507, 3: 5567, 4: 6628, 5: 7688, 6: 8749,  7: 8947,  8: 9146},
         "transportation": {1: 2100, 2: 2900, 3: 3700, 4: 4500, 5: 5300, 6: 6100,  7: 6900,  8: 7700},
     },
     "Ohio": {
-        "childcare":      {1: 3600, 2: 4700, 3: 5800, 4: 6900, 5: 8000, 6: 9100,  7: 10200, 8: 11300},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 1762, 2: 2383, 3: 3004, 4: 3625, 5: 4246, 6: 4867, 7: 5488, 8: 6109},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 3063, 2: 4006, 3: 4948, 4: 5891, 5: 6833, 6: 7775,  7: 7952,  8: 8129},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Oklahoma": {
-        "childcare":      {1: 3400, 2: 4500, 3: 5600, 4: 6700, 5: 7800, 6: 8900,  7: 10000, 8: 11100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3317, 2: 4337, 3: 5357, 4: 6377, 5: 7397, 6: 8417, 7: 9437, 8: 10457},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2510, 2: 3282, 3: 4054, 4: 4826, 5: 5599, 6: 6371,  7: 6516,  8: 6660},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "Oregon": {
-        "childcare":      {1: 4500, 2: 5800, 3: 7100, 4: 8400, 5: 9700, 6: 11000, 7: 12300, 8: 13600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2512, 2: 3408, 3: 4304, 4: 5200, 5: 6096, 6: 6992, 7: 7888, 8: 8784},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3100, 2: 4100, 3: 5100, 4: 6100, 5: 7100, 6: 8100,  7: 9100,  8: 10100},
+        "utility":        {1: 3361, 2: 4395, 3: 5429, 4: 6463, 5: 7497, 6: 8531,  7: 8724,  8: 8918},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "Pennsylvania": {
-        "childcare":      {1: 4100, 2: 5300, 3: 6500, 4: 7700, 5: 8900, 6: 10100, 7: 11300, 8: 12500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2509, 2: 3406, 3: 4303, 4: 5200, 5: 6097, 6: 6994, 7: 7891, 8: 8788},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
+        "utility":        {1: 3372, 2: 4409, 3: 5447, 4: 6484, 5: 7522, 6: 8559,  7: 8754,  8: 8948},
         "transportation": {1: 2200, 2: 3000, 3: 3800, 4: 4600, 5: 5400, 6: 6200,  7: 7000,  8: 7800},
     },
     "Rhode Island": {
-        "childcare":      {1: 4400, 2: 5700, 3: 7000, 4: 8300, 5: 9600, 6: 10900, 7: 12200, 8: 13500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2509, 2: 3406, 3: 4303, 4: 5200, 5: 6097, 6: 6994, 7: 7891, 8: 8788},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3100, 2: 4100, 3: 5100, 4: 6100, 5: 7100, 6: 8100,  7: 9100,  8: 10100},
+        "utility":        {1: 3618, 2: 4731, 3: 5844, 4: 6957, 5: 8070, 6: 9183,  7: 9392,  8: 9600},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "South Carolina": {
-        "childcare":      {1: 3400, 2: 4500, 3: 5600, 4: 6700, 5: 7800, 6: 8900,  7: 10000, 8: 11100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3615, 2: 4728, 3: 5841, 4: 6954, 5: 8067, 6: 9180, 7: 10293, 8: 11406},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2500, 2: 3400, 3: 4300, 4: 5200, 5: 6100, 6: 7000,  7: 7900,  8: 8800},
+        "utility":        {1: 2768, 2: 3620, 3: 4472, 4: 5324, 5: 6175, 6: 7027,  7: 7187,  8: 7346},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "South Dakota": {
-        "childcare":      {1: 3700, 2: 4800, 3: 5900, 4: 7000, 5: 8100, 6: 9200,  7: 10300, 8: 11400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2626, 2: 3562, 3: 4498, 4: 5434, 5: 6370, 6: 7306, 7: 8242, 8: 9178},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 3068, 2: 4012, 3: 4956, 4: 5900, 5: 6844, 6: 7788,  7: 7965,  8: 8142},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Tennessee": {
-        "childcare":      {1: 3400, 2: 4500, 3: 5600, 4: 6700, 5: 7800, 6: 8900,  7: 10000, 8: 11100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3623, 2: 4738, 3: 5853, 4: 6968, 5: 8083, 6: 9198, 7: 10313, 8: 11428},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2600, 2: 3500, 3: 4400, 4: 5300, 5: 6200, 6: 7100,  7: 8000,  8: 8900},
+        "utility":        {1: 2738, 2: 3581, 3: 4424, 4: 5266, 5: 6109, 6: 6952,  7: 7110,  8: 7268},
         "transportation": {1: 1900, 2: 2600, 3: 3300, 4: 4000, 5: 4700, 6: 5400,  7: 6100,  8: 6800},
     },
     "Texas": {
-        "childcare":      {1: 3700, 2: 4800, 3: 5900, 4: 7000, 5: 8100, 6: 9200,  7: 10300, 8: 11400},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3801, 2: 4971, 3: 6141, 4: 7311, 5: 8481, 6: 9651, 7: 10821, 8: 11991},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 2918, 2: 3816, 3: 4714, 4: 5612, 5: 6510, 6: 7408,  7: 7576,  8: 7744},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Utah": {
-        "childcare":      {1: 3800, 2: 4900, 3: 6000, 4: 7100, 5: 8200, 6: 9300,  7: 10400, 8: 11500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 4107, 2: 5372, 3: 6637, 4: 7902, 5: 9167, 6: 10432, 7: 11697, 8: 12962},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2700, 2: 3600, 3: 4500, 4: 5400, 5: 6300, 6: 7200,  7: 8100,  8: 9000},
+        "utility":        {1: 3183, 2: 4162, 3: 5141, 4: 6120, 5: 7100, 6: 8079,  7: 8262,  8: 8446},
         "transportation": {1: 2000, 2: 2700, 3: 3400, 4: 4100, 5: 4800, 6: 5500,  7: 6200,  8: 6900},
     },
     "Vermont": {
-        "childcare":      {1: 4500, 2: 5800, 3: 7100, 4: 8400, 5: 9700, 6: 11000, 7: 12300, 8: 13600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 5021, 2: 6814, 3: 8607, 4: 10400, 5: 12193, 6: 13986, 7: 15779, 8: 17572},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300, 6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 3518, 2: 4601, 3: 5684, 4: 6766, 5: 7849, 6: 8931,  7: 9134,  8: 9337},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "Virginia": {
-        "childcare":      {1: 4400, 2: 5700, 3: 7000, 4: 8300, 5: 9600, 6: 10900, 7: 12200, 8: 13500},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 4935, 2: 6454, 3: 7973, 4: 9492, 5: 11011, 6: 12530, 7: 14049, 8: 15568},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
+        "utility":        {1: 3731, 2: 4880, 3: 6028, 4: 7176, 5: 8324, 6: 9472,  7: 9687,  8: 9903},
         "transportation": {1: 2300, 2: 3100, 3: 3900, 4: 4700, 5: 5500, 6: 6300,  7: 7100,  8: 7900},
     },
     "Washington": {
-        "childcare":      {1: 5000, 2: 6400, 3: 7800, 4: 9200, 5: 10600, 6: 12000, 7: 13400, 8: 14800},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3131, 2: 4094, 3: 5057, 4: 6020, 5: 6983, 6: 7946, 7: 8909, 8: 9872},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3300, 2: 4300, 3: 5300, 4: 6300, 5: 7300,  6: 8300,  7: 9300,  8: 10300},
+        "utility":        {1: 3817, 2: 4992, 3: 6166, 4: 7341, 5: 8515,  6: 9690,  7: 9910,  8: 10130},
         "transportation": {1: 2500, 2: 3300, 3: 4100, 4: 4900, 5: 5700,  6: 6500,  7: 7300,  8: 8100},
     },
     "West Virginia": {
-        "childcare":      {1: 3100, 2: 4100, 3: 5100, 4: 6100, 5: 7100, 6: 8100,  7: 9100,  8: 10100},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 3338, 2: 4366, 3: 5394, 4: 6422, 5: 7450, 6: 8478, 7: 9506, 8: 10534},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2500, 2: 3400, 3: 4300, 4: 5200, 5: 6100, 6: 7000,  7: 7900,  8: 8800},
+        "utility":        {1: 2550, 2: 3335, 3: 4120, 4: 4904, 5: 5689, 6: 6474,  7: 6621,  8: 6768},
         "transportation": {1: 1800, 2: 2500, 3: 3200, 4: 3900, 5: 4600, 6: 5300,  7: 6000,  8: 6700},
     },
     "Wisconsin": {
-        "childcare":      {1: 3900, 2: 5000, 3: 6100, 4: 7200, 5: 8300, 6: 9400,  7: 10500, 8: 11600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2509, 2: 3406, 3: 4303, 4: 5200, 5: 6097, 6: 6994, 7: 7891, 8: 8788},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 3000, 2: 4000, 3: 5000, 4: 6000, 5: 7000, 6: 8000,  7: 9000,  8: 10000},
+        "utility":        {1: 3322, 2: 4344, 3: 5366, 4: 6388, 5: 7411, 6: 8433,  7: 8624,  8: 8816},
         "transportation": {1: 2100, 2: 2900, 3: 3700, 4: 4500, 5: 5300, 6: 6100,  7: 6900,  8: 7700},
     },
     "Wyoming": {
-        "childcare":      {1: 3900, 2: 5000, 3: 6100, 4: 7200, 5: 8300, 6: 9400,  7: 10500, 8: 11600},
-        "food":           FPL_200_LIMITS,
+        "childcare":      {1: 2195, 2: 2980, 3: 3765, 4: 4550, 5: 5335, 6: 6120, 7: 6905, 8: 7690},
         "internet":       FPL_200_LIMITS,
-        "utility":        {1: 2800, 2: 3700, 3: 4600, 4: 5500, 5: 6400, 6: 7300,  7: 8200,  8: 9100},
+        "utility":        {1: 2988, 2: 3908, 3: 4827, 4: 5747, 5: 6666, 6: 7585,  7: 7758,  8: 7930},
         "transportation": {1: 2100, 2: 2900, 3: 3700, 4: 4500, 5: 5300, 6: 6100,  7: 6900,  8: 7700},
     },
 }
@@ -1221,148 +1323,538 @@ class ModernButton(tk.Canvas):
     config = configure
 
 
-class ScrollableFrame(ttk.Frame):
-    """A scrollable column. Tk doesn't let you scroll a Frame directly,
-    so we put a Canvas inside this Frame, then put another Frame inside
-    the Canvas. We can scroll the Canvas, which scrolls the inner Frame.
+class CanvasScrollbar(tk.Canvas):
+    """Modern canvas-based scrollbar with smooth rendering and robust thumb calculation."""
+    
+    def __init__(self, parent, command=None, width=10, bg="#222", thumb_color="#888"):
+        super().__init__(parent, width=width, height=1, highlightthickness=0, bg=bg)
+        
+        self.command = command
+        self.thumb_color = thumb_color
+        self._start = 0
+        self._end = 1
+        self._dragging = False
+        
+        self.bind("<Button-1>", self._click)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Configure>", lambda e: self._draw())
+        self.bind("<Enter>", lambda e: self.config(cursor="hand2"))
+        self.bind("<Leave>", lambda e: self.config(cursor=""))
+    
+    def set(self, start, end):
+        """Update scrollbar position."""
+        self._start = max(0.0, min(1.0, float(start)))
+        self._end = max(0.0, min(1.0, float(end)))
+        self._draw()
+    
+    def _draw(self):
+        """Render the scrollbar thumb."""
+        self.delete("all")
+        
+        h = self.winfo_height()
+        w = self.winfo_width()
+        
+        if h < 4 or w < 4:
+            return  # Too small to draw
+        
+        # Calculate thumb position and size
+        thumb_start = int(self._start * h)
+        thumb_end = int(self._end * h)
+        thumb_height = thumb_end - thumb_start
+        
+        # Minimum thumb size for usability
+        min_thumb = max(16, int(h * 0.05))
+        if thumb_height < min_thumb:
+            thumb_height = min_thumb
+            thumb_end = thumb_start + thumb_height
+        
+        # Clamp to canvas bounds
+        thumb_start = max(0, min(thumb_start, h - thumb_height))
+        thumb_end = min(h, thumb_start + thumb_height)
+        
+        radius = w // 2
+        
+        # Main body rectangle
+        self.create_rectangle(
+            2, thumb_start + radius,
+            w - 2, thumb_end - radius,
+            fill=self.thumb_color,
+            outline=""
+        )
+        
+        # Top rounded cap
+        if thumb_start + 2 * radius <= thumb_end:
+            self.create_oval(
+                2, thumb_start,
+                w - 2, thumb_start + 2 * radius,
+                fill=self.thumb_color,
+                outline=""
+            )
+        
+        # Bottom rounded cap
+        if thumb_end - 2 * radius >= thumb_start:
+            self.create_oval(
+                2, thumb_end - 2 * radius,
+                w - 2, thumb_end,
+                fill=self.thumb_color,
+                outline=""
+            )
+    
+    def _click(self, event):
+        """Handle click on scrollbar."""
+        self._dragging = True
+        self._drag(event)
+    
+    def _drag(self, event):
+        """Handle dragging the thumb."""
+        if not self.command:
+            return
+        
+        h = self.winfo_height()
+        if h <= 0:
+            return
+        
+        fraction = event.y / h
+        fraction = max(0.0, min(1.0, fraction))
+        
+        self.command("moveto", fraction)
+    
+    def _release(self, _event):
+        """Handle release of mouse."""
+        self._dragging = False
 
-    Mouse-wheel handling is tricky because the results page has scrollable
-    frames inside scrollable frames. We bind the mouse wheel ONCE on the
-    root window, then route the event to the right frame based on where
-    the cursor is."""
 
-    # Class-level (shared) variables. These remember which frame is "active"
-    # (last hovered) and whether we've already set up the mousewheel binding.
-    _active: ScrollableFrame | None = None
-    _wheel_bound: bool = False
+class HorizontalCanvasScrollbar(tk.Canvas):
+    """Modern horizontal canvas-based scrollbar with robust thumb calculation."""
+    
+    def __init__(self, parent, command=None, height=10, bg="#222", thumb_color="#888"):
+        super().__init__(parent, height=height, width=1, highlightthickness=0, bg=bg)
+        
+        self.command = command
+        self.thumb_color = thumb_color
+        self._start = 0
+        self._end = 1
+        self._dragging = False
+        
+        self.bind("<Button-1>", self._click)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Configure>", lambda e: self._draw())
+        self.bind("<Enter>", lambda e: self.config(cursor="hand2"))
+        self.bind("<Leave>", lambda e: self.config(cursor=""))
+    
+    def set(self, start, end):
+        """Update scrollbar position."""
+        self._start = max(0.0, min(1.0, float(start)))
+        self._end = max(0.0, min(1.0, float(end)))
+        self._draw()
+    
+    def _draw(self):
+        """Render the scrollbar thumb."""
+        self.delete("all")
+        
+        h = self.winfo_height()
+        w = self.winfo_width()
+        
+        if h < 4 or w < 4:
+            return  # Too small to draw
+        
+        # Calculate thumb position and size
+        thumb_start = int(self._start * w)
+        thumb_end = int(self._end * w)
+        thumb_width = thumb_end - thumb_start
+        
+        # Minimum thumb size for usability
+        min_thumb = max(16, int(w * 0.05))
+        if thumb_width < min_thumb:
+            thumb_width = min_thumb
+            thumb_end = thumb_start + thumb_width
+        
+        # Clamp to canvas bounds
+        thumb_start = max(0, min(thumb_start, w - thumb_width))
+        thumb_end = min(w, thumb_start + thumb_width)
+        
+        radius = h // 2
+        
+        # Main body rectangle
+        self.create_rectangle(
+            thumb_start + radius, 2,
+            thumb_end - radius, h - 2,
+            fill=self.thumb_color,
+            outline=""
+        )
+        
+        # Left rounded cap
+        if thumb_start + 2 * radius <= thumb_end:
+            self.create_oval(
+                thumb_start, 2,
+                thumb_start + 2 * radius, h - 2,
+                fill=self.thumb_color,
+                outline=""
+            )
+        
+        # Right rounded cap
+        if thumb_end - 2 * radius >= thumb_start:
+            self.create_oval(
+                thumb_end - 2 * radius, 2,
+                thumb_end, h - 2,
+                fill=self.thumb_color,
+                outline=""
+            )
+    
+    def _click(self, event):
+        """Handle click on scrollbar."""
+        self._dragging = True
+        self._drag(event)
+    
+    def _drag(self, event):
+        """Handle dragging the thumb."""
+        if not self.command:
+            return
+        
+        w = self.winfo_width()
+        if w <= 0:
+            return
+        
+        fraction = event.x / w
+        fraction = max(0.0, min(1.0, fraction))
+        
+        self.command("moveto", fraction)
+    
+    def _release(self, _event):
+        """Handle release of mouse."""
+        self._dragging = False
 
-    def __init__(self, parent: tk.Widget, background: str = APP_BG) -> None:
+
+class HorizontalScrollableFrame(ttk.Frame):
+    """Custom horizontally scrollable frame with smooth scrolling and keyboard support."""
+
+    _active = None
+    _wheel_bound = False
+
+    def __init__(self, parent: ttk.Widget, background: str = APP_BG) -> None:
         super().__init__(parent)
+
         self._bg = background
-        # Canvas that does the actual scrolling.
-        self.canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0, background=background)
-        # Vertical scrollbar wired to the canvas's yview.
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        # The inner frame is where the actual content goes.
+        self._scroll_velocity = 0.0
+        self._scroll_after_id = None
+        self._scroll_momentum = 0.98
+
+        # Main scrolling canvas
+        self.canvas = tk.Canvas(
+            self,
+            borderwidth=0,
+            highlightthickness=0,
+            background=background
+        )
+
+        # Custom horizontal scrollbar
+        self.scrollbar = HorizontalCanvasScrollbar(
+            self,
+            command=self._scroll_command,
+            height=10,
+            bg=background,
+            thumb_color="#888"
+        )
+
+        # Inner frame (actual content container)
         self.inner = tk.Frame(self.canvas, background=background)
-        # Place the inner frame on the canvas at top-left.
-        self.window_id = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        # Tell the canvas to update the scrollbar position as it scrolls.
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        # Lay out: canvas fills most of the space, scrollbar on the right.
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        # When the inner frame's size changes, recalculate the scroll region.
+
+        self.window_id = self.canvas.create_window(
+            (0, 0),
+            window=self.inner,
+            anchor="nw"
+        )
+
+        # Connect scrollbar <-> canvas
+        self.canvas.configure(xscrollcommand=self._on_scroll)
+
+        # Layout
+        self.canvas.pack(side="top", fill="both", expand=True)
+        self.scrollbar.pack(side="bottom", fill="x")
+
+        # Resize + scroll region handling
         self.inner.bind("<Configure>", self._update_scroll_region)
-        # When the canvas resizes, make the inner frame match its width.
         self.canvas.bind("<Configure>", self._resize_inner)
-        # Track when the mouse enters this scroll frame so we know which one is active.
+
+        # Mouse tracking
         self.bind("<Enter>", self._activate)
         self.canvas.bind("<Enter>", self._activate)
         self.inner.bind("<Enter>", self._activate)
-        # Clean up when this frame is destroyed.
+
+        # Keyboard bindings for horizontal scrolling
+        self.canvas.bind("<Left>", self._on_key_left)
+        self.canvas.bind("<Right>", self._on_key_right)
+
         self.bind("<Destroy>", self._on_destroy)
+
+    def _update_scroll_region(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_inner(self, event):
+        self.canvas.itemconfig(self.window_id, height=event.height)
+
+    def _activate(self, _event):
+        HorizontalScrollableFrame._active = self
+        self.canvas.focus_set()
+
+    def _on_destroy(self, event):
+        if event.widget == self:
+            if HorizontalScrollableFrame._active is self:
+                HorizontalScrollableFrame._active = None
+            if self._scroll_after_id:
+                try:
+                    self.after_cancel(self._scroll_after_id)
+                except tk.TclError:
+                    pass
+
+    def _on_scroll(self, start, end):
+        """Update scrollbar when canvas scrolls."""
+        self.scrollbar.set(start, end)
+
+    def _scroll_command(self, *args):
+        """Handle scrollbar commands."""
+        self.canvas.xview(*args)
+
+    def _animate_scroll(self):
+        """Smooth scroll animation with momentum."""
+        if abs(self._scroll_velocity) > 0.01:
+            self.canvas.xview_scroll(int(self._scroll_velocity), "units")
+            self._scroll_velocity *= self._scroll_momentum
+            self._scroll_after_id = self.after(16, self._animate_scroll)
+        else:
+            self._scroll_velocity = 0.0
+            self._scroll_after_id = None
+
+    def _smooth_scroll(self, velocity):
+        """Start smooth scrolling with given velocity."""
+        if self._scroll_after_id:
+            try:
+                self.after_cancel(self._scroll_after_id)
+            except tk.TclError:
+                pass
+        self._scroll_velocity = velocity
+        self._animate_scroll()
+
+    # ============ Keyboard Support ============
+
+    def _on_key_left(self, _event):
+        """Arrow key left."""
+        self._smooth_scroll(-3)
+
+    def _on_key_right(self, _event):
+        """Arrow key right."""
+        self._smooth_scroll(3)
+
+
+class ScrollableFrame(ttk.Frame):
+    """Custom scrollable frame with canvas-based scrollbar, animated scrolling,
+    and keyboard support with smooth acceleration."""
+
+    _active = None
+    _wheel_bound = False
+
+    def __init__(self, parent: tk.Widget, background: str = APP_BG) -> None:
+        super().__init__(parent)
+
+        self._bg = background
+        self._scroll_velocity = 0.0  # for smooth scrolling
+        self._scroll_after_id = None  # animation timer
+        self._scroll_momentum = 0.98  # friction/deceleration
+
+        # Main scrolling canvas
+        self.canvas = tk.Canvas(
+            self,
+            borderwidth=0,
+            highlightthickness=0,
+            background=background,
+            highlightcolor=background,
+            highlightbackground=background
+        )
+        self.canvas.config(takefocus=True)  # Make canvas focusable
+
+        # Custom scrollbar
+        self.scrollbar = CanvasScrollbar(
+            self,
+            command=self._scroll_command,
+            width=10,
+            bg=background,
+            thumb_color="#888"
+        )
+
+        # Inner frame (actual content container)
+        self.inner = tk.Frame(self.canvas, background=background)
+
+        self.window_id = self.canvas.create_window(
+            (0, 0),
+            window=self.inner,
+            anchor="nw"
+        )
+
+        # Connect scrollbar <-> canvas
+        self.canvas.configure(yscrollcommand=self._on_scroll)
+
+        # Layout
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # Resize + scroll region handling
+        self.inner.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_inner)
+
+        # Mouse tracking
+        self.bind("<Enter>", self._activate)
+        self.canvas.bind("<Enter>", self._activate)
+        self.inner.bind("<Enter>", self._activate)
+
+        # Keyboard bindings on canvas
+        self.canvas.bind("<KeyPress-Up>", self._on_key_up)
+        self.canvas.bind("<KeyPress-Down>", self._on_key_down)
+        self.canvas.bind("<KeyPress-Prior>", self._on_page_up)
+        self.canvas.bind("<KeyPress-Next>", self._on_page_down)
+        self.canvas.bind("<KeyPress-Home>", self._on_home)
+        self.canvas.bind("<KeyPress-End>", self._on_end)
+        
+        # Also bind to frame level for better event capture
+        self.bind("<KeyPress-Up>", self._on_key_up)
+        self.bind("<KeyPress-Down>", self._on_key_down)
+        self.bind("<KeyPress-Prior>", self._on_page_up)
+        self.bind("<KeyPress-Next>", self._on_page_down)
+        self.bind("<KeyPress-Home>", self._on_home)
+        self.bind("<KeyPress-End>", self._on_end)
+
+        self.bind("<Destroy>", self._on_destroy)
+
+    def _update_scroll_region(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_inner(self, event):
+        self.canvas.itemconfig(self.window_id, width=event.width)
+
+    def _activate(self, _event):
+        ScrollableFrame._active = self
+        # Focus canvas to receive keyboard events
+        self.canvas.focus_set()
+
+    def _on_destroy(self, event):
+        if event.widget == self:
+            if ScrollableFrame._active is self:
+                ScrollableFrame._active = None
+            if self._scroll_after_id:
+                try:
+                    self.after_cancel(self._scroll_after_id)
+                except tk.TclError:
+                    pass
+
+    def _on_scroll(self, start, end):
+        """Update scrollbar when canvas scrolls."""
+        self.scrollbar.set(start, end)
+
+    def _scroll_command(self, *args):
+        """Handle scrollbar commands with animation."""
+        self.canvas.yview(*args)
+
+    def _animate_scroll(self):
+        """Smooth scroll animation with momentum."""
+        if abs(self._scroll_velocity) > 0.01:
+            self.canvas.yview_scroll(int(self._scroll_velocity), "units")
+            self._scroll_velocity *= self._scroll_momentum
+            self._scroll_after_id = self.after(16, self._animate_scroll)  # ~60 FPS
+        else:
+            self._scroll_velocity = 0.0
+            self._scroll_after_id = None
+
+    def _smooth_scroll(self, velocity):
+        """Start smooth scrolling with given velocity."""
+        if self._scroll_after_id:
+            try:
+                self.after_cancel(self._scroll_after_id)
+            except tk.TclError:
+                pass
+        self._scroll_velocity = velocity
+        self._animate_scroll()
+
+    # ============ Keyboard Support ============
+
+    def _on_key_up(self, _event):
+        """Arrow key up."""
+        self._smooth_scroll(-3)
+
+    def _on_key_down(self, _event):
+        """Arrow key down."""
+        self._smooth_scroll(3)
+
+    def _on_page_up(self, _event):
+        """Page Up key."""
+        self.canvas.yview_scroll(-10, "units")
+
+    def _on_page_down(self, _event):
+        """Page Down key."""
+        self.canvas.yview_scroll(10, "units")
+
+    def _on_home(self, _event):
+        """Home key - scroll to top."""
+        self.canvas.yview_moveto(0)
+
+    def _on_end(self, _event):
+        """End key - scroll to bottom."""
+        self.canvas.yview_moveto(1)
+
+    # ============ Mousewheel Support with Smooth Acceleration ============
 
     @classmethod
     def hook_mousewheel(cls, root: tk.Misc) -> None:
-        """Set up mouse-wheel scrolling for the whole app. Only call this once."""
         if cls._wheel_bound:
             return
-        # bind_all means: catch this event no matter what widget the mouse is over.
-        # <MouseWheel> is for Windows/macOS. <Button-4>/<Button-5> are for Linux.
+
         root.bind_all("<MouseWheel>", cls._on_mousewheel_all)
         root.bind_all("<Button-4>", cls._on_linux_up_all)
         root.bind_all("<Button-5>", cls._on_linux_down_all)
+
         cls._wheel_bound = True
 
-    def _activate(self, _event: tk.Event) -> None:
-        # Mark this frame as the currently-active scroll target.
-        ScrollableFrame._active = self
-
-    def _on_destroy(self, event: tk.Event) -> None:
-        # If the active frame is being destroyed, forget about it.
-        if event.widget == self and ScrollableFrame._active is self:
-            ScrollableFrame._active = None
-
     @classmethod
-    def _scroll_target(cls, event: tk.Event) -> ScrollableFrame | None:
-        """Figure out which ScrollableFrame the mouse is actually inside.
-        Walks up the widget tree from the event widget until we find one."""
+    def _scroll_target(cls, event):
+        """Find the scrollable frame under the cursor."""
         w = getattr(event, "widget", None)
+
         while w is not None:
             if isinstance(w, ScrollableFrame):
                 try:
-                    # Make sure it actually exists and is on screen.
                     if w.winfo_exists() and w.winfo_ismapped():
                         return w
                 except tk.TclError:
                     pass
             try:
-                # Move up to the parent widget and try again.
-                w = w.master  # type: ignore[assignment]
-            except (AttributeError, tk.TclError):
+                w = w.master
+            except Exception:
                 break
-        # Fallback: use whichever frame was last hovered.
+
         return cls._active
 
     @classmethod
-    def _apply_wheel_delta(cls, sf: ScrollableFrame, delta: int) -> None:
-        """Actually scroll the given frame by the wheel amount."""
-        try:
-            # Skip if the frame was destroyed or hidden.
-            if not sf.winfo_exists() or not sf.winfo_ismapped():
-                return
-        except tk.TclError:
-            return
-        c = sf.canvas
-        if sys.platform == "darwin":
-            # macOS sends small delta values, so we use a fixed step.
-            if delta:
-                step = 3 if delta > 0 else -3
-                c.yview_scroll(step, "units")
-        elif delta:
-            # On Windows the delta is in multiples of 120; convert to scroll units.
-            c.yview_scroll(int(-1 * (delta / 120)), "units")
+    def _on_mousewheel_all(cls, event):
+        """Handle Windows/macOS mousewheel with acceleration."""
+        target = cls._scroll_target(event)
+        if target:
+            # event.delta is typically 120 for one wheel notch
+            velocity = -1 * (event.delta / 120) * 5  # Scale for momentum
+            target._smooth_scroll(velocity)
 
     @classmethod
-    def _on_mousewheel_all(cls, event: tk.Event) -> None:
-        # Wheel event on Win/Mac: find the right frame and scroll it.
-        sf = cls._scroll_target(event)
-        if sf is None:
-            return
-        cls._apply_wheel_delta(sf, getattr(event, "delta", 0) or 0)
+    def _on_linux_up_all(cls, event):
+        """Handle Linux scroll up (Button-4)."""
+        target = cls._scroll_target(event)
+        if target:
+            target._smooth_scroll(-5)
 
     @classmethod
-    def _on_linux_up_all(cls, event: tk.Event) -> None:
-        # Linux scroll-up event.
-        sf = cls._scroll_target(event)
-        if sf is None:
-            return
-        try:
-            if sf.winfo_exists() and sf.winfo_ismapped():
-                sf.canvas.yview_scroll(-3, "units")
-        except tk.TclError:
-            pass
-
-    @classmethod
-    def _on_linux_down_all(cls, event: tk.Event) -> None:
-        # Linux scroll-down event.
-        sf = cls._scroll_target(event)
-        if sf is None:
-            return
-        try:
-            if sf.winfo_exists() and sf.winfo_ismapped():
-                sf.canvas.yview_scroll(3, "units")
-        except tk.TclError:
-            pass
-
-    def _update_scroll_region(self, _event: tk.Event) -> None:
-        # Tell the canvas how big its scrollable area is (= the size of the inner frame).
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _resize_inner(self, event: tk.Event) -> None:
-        # When the canvas changes width, stretch the inner frame to match.
-        self.canvas.itemconfigure(self.window_id, width=event.width)
+    def _on_linux_down_all(cls, event):
+        """Handle Linux scroll down (Button-5)."""
+        target = cls._scroll_target(event)
+        if target:
+            target._smooth_scroll(5)
 
 
 # --- Persistence & small UX helpers (settings, maps, clipboard, toasts) ----------
@@ -1396,34 +1888,51 @@ def load_logo():
 
 
 def default_settings() -> dict[str, object]:
-    """The default settings used the very first time the app runs."""
+    """
+    The baseline settings used the very first time the app runs (or if the
+    settings file gets deleted). All keys here MUST match what load_settings()
+    and the settings panel read/write.
+
+      font_scale:     0 = normal size. Positive = bigger text for accessibility.
+      reduce_motion:  if True, skip the animated button pulse effect.
+      autosave_draft: if True, save the form to disk every time the user changes a field.
+    """
     return {"font_scale": 0, "reduce_motion": False, "autosave_draft": True}
 
 
 def load_settings() -> dict[str, object]:
-    """Read the settings file off disk. If it's missing or broken, use defaults."""
+    """
+    Read saved settings from disk. Strategy:
+      1. If the file doesn't exist → use defaults (first run).
+      2. If the file exists but is corrupt → use defaults (graceful recovery).
+      3. If the file exists and is valid → merge with defaults so any NEW keys
+         added in a future version automatically get their default values.
+    """
     if not SETTINGS_FILE.exists():
-        return default_settings()
+        return default_settings()   # first run — no file yet
     try:
-        # Read the file and parse it as JSON.
+        # Read the raw text and parse it as a JSON dictionary.
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        # Start with defaults, then overwrite with any saved values that exist.
-        # This way, missing keys get safe default values.
+        # Start from defaults so new/missing keys are always populated.
         base = default_settings()
+        # Overwrite only the keys that exist in both the file AND the defaults dict.
+        # This prevents stale/unknown keys from sneaking in.
         base.update({k: data[k] for k in base if k in data})
         return base
     except (json.JSONDecodeError, OSError):
-        # File is corrupt or unreadable — fall back to defaults.
+        # File is corrupt, empty, or we don't have read permission — use defaults.
         return default_settings()
 
 
 def save_settings(data: dict[str, object]) -> None:
-    """Write settings out to disk as nicely-formatted JSON."""
+    """Write the settings dictionary to disk as nicely-indented JSON.
+    Silently ignores disk errors (full disk, read-only file system, etc.)
+    because a failed settings save should never crash the app.
+    """
     try:
         SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except OSError:
-        # If the disk is full or read-only, just silently skip.
-        pass
+        pass   # disk error — just skip silently
 
 
 def open_location_in_maps(address: str) -> None:
@@ -1536,8 +2045,13 @@ class BenefitBridgeApp(tk.Tk):
         self.state_var = tk.StringVar(value="California")       # state dropdown
         self.age_var = tk.StringVar(value="Adult")               # age range dropdown
         self.employment_var = tk.StringVar(value=EMPLOYMENT_OPTIONS[0])  # employment dropdown
-        self.residency_var = tk.BooleanVar(value=True)           # is a US resident?
+        self.residency_var = tk.BooleanVar(value=True)
+        self.healthy_var = tk.BooleanVar(value=True)           # is a US resident?
         self.child_under_13_var = tk.BooleanVar(value=True)      # has young child?
+        self.child_under_5_var = tk.BooleanVar(value=False)      # has child under 5 (WIC)?
+        self.pregnant_var = tk.BooleanVar(value=False)           # pregnant (WIC)?
+        self.postpartum_var = tk.BooleanVar(value=False)         # postpartum (WIC)?
+        self.breastfeeding_var = tk.BooleanVar(value=False)      # breastfeeding (WIC)?
         self.utility_hardship_var = tk.BooleanVar(value=False)   # behind on utilities?
         self.internet_need_var = tk.BooleanVar(value=True)       # needs internet?
         self.transportation_need_var = tk.BooleanVar(value=False)  # needs transit?
@@ -1629,16 +2143,28 @@ class BenefitBridgeApp(tk.Tk):
         logo_path = resolve_brand_logo_path()
         if not logo_path:
             return None
+        max_h = 70
+        # Prefer PIL: smooth resize with no subsample GC hazard.
+        if Image is not None and ImageTk is not None:
+            try:
+                pil_img = Image.open(str(logo_path))
+                if pil_img.height > max_h:
+                    scale = pil_img.height / max_h
+                    new_w = max(1, int(pil_img.width / scale))
+                    pil_img = pil_img.resize((new_w, max_h), Image.LANCZOS)
+                return ImageTk.PhotoImage(pil_img)
+            except Exception:
+                return None
+        # Fallback: pure Tkinter (PIL not installed).
         try:
-            # Tk's PhotoImage handles GIF and PNG out of the box.
             image = tk.PhotoImage(file=str(logo_path))
         except tk.TclError:
-            # File exists but isn't a valid image — skip it.
             return None
-        # If the logo is too tall, shrink it down by an integer factor.
-        max_h = 70
         if image.height() > max_h:
             ratio = max(1, math.ceil(image.height() / max_h))
+            # Keep original alive — subsample result can be invalidated when
+            # the source image is garbage-collected on some Tk builds.
+            self._brand_logo_original = image
             image = image.subsample(ratio, ratio)
         return image
 
@@ -1681,7 +2207,8 @@ class BenefitBridgeApp(tk.Tk):
 
         # Show the logo image if we successfully loaded one.
         if self.brand_logo_image is not None:
-            tk.Label(left_brand, image=self.brand_logo_image, bg=HEADER_BG).pack(side="left", padx=(0, 14))
+            logo_label = tk.Label(left_brand, image=self.brand_logo_image, bg=HEADER_BG)
+            logo_label.pack(side="left", padx=(0, 14))
 
         # Stack the title and slogan vertically.
         title_group = tk.Frame(left_brand, bg=HEADER_BG)
@@ -1893,7 +2420,9 @@ class BenefitBridgeApp(tk.Tk):
                 "age": self.age_var.get(),
                 "employment": self.employment_var.get(),
                 "resident": self.residency_var.get(),
+                "healthy": self.healthy_var.get(),
                 "child_under_13": self.child_under_13_var.get(),
+                "child_under_5": self.child_under_5_var.get(),
                 "utility_hardship": self.utility_hardship_var.get(),
                 "internet_need": self.internet_need_var.get(),
                 "transportation_need": self.transportation_need_var.get(),
@@ -1934,7 +2463,9 @@ class BenefitBridgeApp(tk.Tk):
         self.age_var.set(str(data.get("age", "Adult")))
         self.employment_var.set(str(data.get("employment", EMPLOYMENT_OPTIONS[0])))
         self.residency_var.set(bool(data.get("resident", True)))
+        self.healthy_var.set(bool(data.get("healthy", True)))
         self.child_under_13_var.set(bool(data.get("child_under_13", True)))
+        self.child_under_5_var.set(bool(data.get("child_under_5", False)))
         self.utility_hardship_var.set(bool(data.get("utility_hardship", False)))
         self.internet_need_var.set(bool(data.get("internet_need", True)))
         self.transportation_need_var.set(bool(data.get("transportation_need", False)))
@@ -2143,8 +2674,9 @@ class BenefitBridgeApp(tk.Tk):
         ).pack(anchor="w", pady=(6, 14))
 
         # === Three info "chip" cards across the top ===
-        chips = tk.Frame(self._step_host, bg=APP_BG)
-        chips.pack(fill="x", pady=(0, 22))
+        chips_container = HorizontalScrollableFrame(self._step_host, APP_BG)
+        chips_container.pack(fill="x", pady=(0, 22))
+        chips = chips_container.inner
         # Each chip's wrap width is about a third of the available area.
         chip_wrap = max(200, min(280, self._text_wrap() // 3))
         # Loop over the chip data and build one card per item.
@@ -2154,7 +2686,7 @@ class BenefitBridgeApp(tk.Tk):
             ("Audit trail", "CSV history + JSON export for handoff."),
         ):
             c = self._card(chips)
-            c.pack(side="left", fill="x", expand=True, padx=(0, 14))
+            c.pack(side="left", fill="both", expand=False, padx=(0, 14))
             cb = self._surface(c)  # the inner body of the rounded card
             # Bold title.
             tk.Label(cb, text=label, bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(13), "bold")).pack(anchor="w", padx=18, pady=(16, 6))
@@ -2270,7 +2802,12 @@ class BenefitBridgeApp(tk.Tk):
         # === Right column: program-specific yes/no questions ===
         self._section_title(right, "Program-specific details")
         self._check_row(right, "US resident or qualified non-citizen", self.residency_var, "Used by food, utility, and internet sample checks.")
+        self._check_row(right, "Are you specifically looking for food with high nutritional value?", self.healthy_var, "It is highly recommended that you select this.")
         self._check_row(right, "A child in the household is under age 13", self.child_under_13_var, "Used by the child-care subsidy check.")
+        self._check_row(right, "A child in the household is under age 5 (WIC)", self.child_under_5_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Pregnant (WIC)", self.pregnant_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Postpartum (within past 6 months, WIC)", self.postpartum_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Breastfeeding (WIC)", self.breastfeeding_var, "Used by the WIC food assistance check.")
         self._check_row(right, "Behind on utility bill or received a shutoff notice", self.utility_hardship_var, "Used by utility bill help.")
         self._check_row(right, "Need home internet for work, school, health, or benefits", self.internet_need_var, "Used by internet subsidy.")
         self._check_row(right, "Need transportation for work, school, or medical appointments", self.transportation_need_var, "Used by transportation vouchers.")
@@ -2570,9 +3107,19 @@ class BenefitBridgeApp(tk.Tk):
             card = self._card(self.results_frame.inner)
             card.pack(fill="x", pady=(0, 18), padx=(0, 10))
             card_body = self._surface(card)
+            # For food programs, extract which specific programs (SNAP/WIC) user qualifies for
+            display_name = program["name"]
+            if program_key == "food" and result.passed:
+                # Extract program names from passed text (e.g., "Income qualifies for SNAP (165% limit) and WIC (185% limit)")
+                for passed_item in result.passed:
+                    if "qualifies for" in passed_item:
+                        parts = passed_item.split("qualifies for ")
+                        if len(parts) > 1:
+                            display_name = "Food: " + parts[1].split(":")[0]
+                        break
             tk.Label(
                 card_body,
-                text=program["name"],
+                text=display_name,
                 bg=CARD_BG,
                 fg=TEXT,
                 font=(FONT_FAMILY, self._font_size(14), "bold"),
@@ -2842,7 +3389,12 @@ class BenefitBridgeApp(tk.Tk):
             "age_range": self.age_var.get(),
             "employment_status": self.employment_var.get(),
             "resident": self.residency_var.get(),
+            "healthy": self.healthy_var.get(),
             "child_under_13": self.child_under_13_var.get(),
+            "child_under_5": self.child_under_5_var.get(),
+            "pregnant": self.pregnant_var.get(),
+            "postpartum": self.postpartum_var.get(),
+            "breastfeeding": self.breastfeeding_var.get(),
             "utility_hardship": self.utility_hardship_var.get(),
             "internet_need": self.internet_need_var.get(),
             "transportation_need": self.transportation_need_var.get(),
@@ -2916,112 +3468,215 @@ class BenefitBridgeApp(tk.Tk):
         messagebox.showinfo("Draft saved", f"Application draft saved and opened in your browser:\n{path}")
 
     def go_next(self) -> None:
-        # This method is the "wizard brain":
-        # step 0 -> validate selected programs
-        # step 1 -> validate profile and compute results
-        # step 2 -> export printable report
+        """
+        The 'Next' button handler — the wizard's brain. What it does depends on
+        which step the user is currently on:
+
+          Step 0 (program selection):
+            → Validate that at least one program checkbox is ticked.
+            → If OK, advance to step 1.
+
+          Step 1 (household profile):
+            → Validate all form fields (income, household size, location, etc.).
+            → If OK, run compute_eligibility() to get the pass/fail results.
+            → Find nearby offices, then advance to step 2 (results screen).
+
+          Step 2 (results):
+            → The 'Next' button becomes 'Save application' — saves a printable PDF/report.
+        """
         if self.current_step == 0:
+            # Step 0 → 1: make sure at least one program is checked.
             if self.collect_programs():
                 self.show_step(1)
         elif self.current_step == 1:
+            # Step 1 → 2: validate the profile, then run the eligibility engine.
             if self.collect_user_data():
+                # Remember the income the user entered so the "what-if" slider works correctly.
                 self._baseline_monthly = float(self.user_data["monthly_income"])
+                # Reset the scenario slider and search filters so results are clean.
                 self.income_scenario_pct.set(100.0)
                 self.office_search_var.set("")
                 self.office_sort_var.set("distance")
+                # THE CORE STEP: run all the eligibility checks and store results.
                 self.eligibility = compute_eligibility(self.selected_programs, self.user_data)
+                # Find offices near the user that can help with programs they qualify for.
                 self.refresh_location_data()
+                # Advance to the results screen.
                 self.show_step(2)
         else:
+            # Step 2: save the application to disk.
             self.save_draft_application()
 
     def go_back(self) -> None:
+        """Go back one step. Does nothing if already on step 0 (the first step)."""
         if self.current_step > 0:
             self.show_step(self.current_step - 1)
 
     def start_over(self) -> None:
+        """
+        Reset ALL form fields and results back to their initial/default values.
+        Asks the user to confirm first because this action clears all their work.
+        """
+        # Show a Yes/No dialog — bail out if they click No.
         if not messagebox.askyesno("Start over", "Clear this run and start again?"):
             return
+        # Reset all program checkboxes to unchecked.
         for variable in self.program_vars.values():
             variable.set(False)
-        self.income_var.set("")
-        self.income_period_var.set("Monthly")
-        self.household_var.set(3)
-        self.location_var.set("")
-        self.state_var.set("California")
-        self.age_var.set("Adult")
-        self.employment_var.set(EMPLOYMENT_OPTIONS[0])
+        # Reset every form field to its default value.
+        self.income_var.set("")                          # clear income amount
+        self.income_period_var.set("Monthly")            # default: monthly
+        self.household_var.set(3)                        # default household size
+        self.location_var.set("")                        # clear ZIP/city
+        self.state_var.set("California")                 # default state
+        self.age_var.set("Adult")                        # default age range
+        self.employment_var.set(EMPLOYMENT_OPTIONS[0])   # first option = "Working"
         self.residency_var.set(True)
-        self.child_under_13_var.set(True)
-        self.utility_hardship_var.set(False)
-        self.internet_need_var.set(True)
-        self.transportation_need_var.set(False)
-        self.radius_var.set("10")
-        self.office_search_var.set("")
-        self.office_sort_var.set("distance")
-        self.income_scenario_pct.set(100.0)
-        self._baseline_monthly = 0.0
-        self._location_view = []
-        self.selected_programs = []
-        self.user_data = {}
-        self.eligibility = {}
-        self.location_results = []
+        self.healthy_var.set(True)                     # default: is a resident
+        self.child_under_13_var.set(True)                # default: has child under 13
+        self.child_under_5_var.set(False)                # default: no child under 5
+        self.utility_hardship_var.set(False)             # default: no utility hardship
+        self.internet_need_var.set(True)                 # default: has internet need
+        self.transportation_need_var.set(False)          # default: no transportation need
+        self.radius_var.set("10")                        # default search radius: 10 miles
+        self.office_search_var.set("")                   # clear office search box
+        self.office_sort_var.set("distance")             # default sort: closest first
+        self.income_scenario_pct.set(100.0)              # reset what-if slider to 100%
+        self._baseline_monthly = 0.0                     # reset the baseline income
+        self._location_view = []                         # clear filtered location results
+        self.selected_programs = []                      # clear selected programs list
+        self.user_data = {}                              # clear the household profile dict
+        self.eligibility = {}                            # clear all eligibility results
+        self.location_results = []                       # clear the list of nearby offices
+        # Go back to the first step.
         self.show_step(0)
 
 
 def parse_money(value: str) -> float:
+    """
+    Convert what the user typed in the income field into a plain float.
+    Handles common formats like "$2,750", "2750", "2,750.00".
+
+    Strips the dollar sign and commas first, then converts to a float.
+    Raises ValueError if the string is empty or not a valid finite number
+    (e.g. "infinity" or "NaN" would pass float() but fail isfinite).
+    """
+    # Remove $ signs and commas so "2,750" becomes "2750" before converting.
     cleaned = value.replace("$", "").replace(",", "").strip()
     if not cleaned:
-        raise ValueError("empty amount")
+        raise ValueError("empty amount")   # user left the field blank
     amount = float(cleaned)
     if not math.isfinite(amount):
-        raise ValueError("invalid amount")
+        raise ValueError("invalid amount")  # reject inf/-inf/NaN
     return amount
 
 
 def extract_zip(location_input: str) -> str | None:
+    """
+    Pull a 5-digit ZIP code out of whatever the user typed in the location field.
+    Works for inputs like "94085", "Sunnyvale, CA 94085", "ZIP: 94085", etc.
+
+    Returns the ZIP as a string (e.g. "94085"), or None if no ZIP is found.
+    """
+    # Look for any sequence of exactly 5 digits surrounded by word boundaries.
     match = re.search(r"\b\d{5}\b", location_input)
     if match:
-        return match.group(0)
+        return match.group(0)   # return the first 5-digit match
+    # Fallback: if the whole input is just 5 digits (no spaces/punctuation), treat it as a ZIP.
     stripped = location_input.strip()
     return stripped if stripped.isdigit() and len(stripped) == 5 else None
 
 
 def extract_city(location_input: str) -> str | None:
+    """
+    Try to extract a recognizable city name from the user's location input.
+    Only used when there's no ZIP code in the input.
+
+    Strategy:
+      1. Strip everything that isn't a letter or space.
+      2. Lowercase and collapse multiple spaces.
+      3. Check if any known city name (from CITY_COORDS) appears as a whole word.
+         We check longest city names first to avoid "san" matching before "san jose".
+      4. If no known city matches, return the cleaned text as-is (best-effort).
+
+    Returns None if the input had a ZIP (handled by extract_zip instead).
+    """
+    # If there's a ZIP in the input, we don't need a city — return None.
     if extract_zip(location_input):
         return None
+    # Strip everything except letters and spaces, then lowercase.
     city = re.sub(r"[^A-Za-z ]", " ", location_input).strip().lower()
+    # Collapse multiple spaces into one (e.g. "san  jose" → "san jose").
     city = " ".join(city.split())
     if not city:
-        return None
+        return None   # input had no letters at all (e.g. just numbers)
+    # Check against known cities — longest names first to avoid partial matches.
     for known_city in sorted(CITY_COORDS, key=len, reverse=True):
         if re.search(rf"\b{re.escape(known_city)}\b", city):
-            return known_city
+            return known_city   # found a match — return the canonical city name
+    # No known city found — return whatever the user typed, cleaned up.
     return city
 
 
+def extra_person_amount(state: str, program_key: str) -> int:
+    # Look up the per-extra-person dollar increment for this state + program.
+    # First checks the state-specific table; if not found, falls back to the
+    # federal FPL-based defaults (used for internet). Returns 0 if unknown.
+    return STATE_EXTRA_PERSON_AMOUNTS.get(state, {}).get(program_key, FPL_EXTRA_PERSON_AMOUNTS.get(program_key, 0))
+
+
+def utility_eligibility_limit(utility_limits: dict[int, int], household_size: int, state: str) -> float:
+    # Utility programs use whichever limit is HIGHER — the state's own table
+    # or 150% of the federal poverty line. This protects households in states
+    # with a low state limit but a relatively high poverty line.
+    state_limit = limit_for_household(utility_limits, household_size, extra_person_amount(state, "utility"))
+    fpl_limit = limit_for_household(FPL_150_LIMITS, household_size, FPL_150_EXTRA_PERSON_AMOUNT)
+    return max(state_limit, fpl_limit)
+
+
 def compute_eligibility(selected_programs: list[str], user_data: dict[str, object]) -> dict[str, ProgramResult]:
+    """
+    Run every selected program's eligibility rules and return a result for each.
+
+    Food is handled separately by food_eligibility() because it has dual-path
+    logic (SNAP + WIC) and state-specific FPL tables. Every other program goes
+    through the standard checks → classify_program() pipeline.
+    """
     results: dict[str, ProgramResult] = {}
     state = str(user_data.get("state", "California"))
+    # Load this state's income limit tables. Falls back to California if unknown.
     limits = STATE_LIMITS.get(state, STATE_LIMITS["California"])
     for program_key in selected_programs:
         if program_key == "childcare":
-            checks = childcare_checks(user_data, limits["childcare"])
+            checks = childcare_checks(user_data, limits["childcare"], state)
         elif program_key == "food":
-            checks = food_checks(user_data, limits["food"])
+            # Food gets its own function — skips the generic classify_program() step.
+            results[program_key] = food_eligibility(user_data, state)
+            continue
         elif program_key == "utility":
-            checks = utility_checks(user_data, limits["utility"])
+            checks = utility_checks(user_data, limits["utility"], state)
         elif program_key == "internet":
-            checks = internet_checks(user_data, limits["internet"])
+            checks = internet_checks(user_data, limits["internet"], state)
         else:
-            checks = transportation_checks(user_data, limits["transportation"])
+            checks = transportation_checks(user_data, limits["transportation"], state)
+        # Turn the list of rule checks into a single pass/fail result with an explanation.
         results[program_key] = classify_program(program_key, checks)
     return results
 
 
-def childcare_checks(user: dict[str, object], childcare_limits: dict[int, int]) -> list[RuleCheck]:
-    limit = limit_for_household(childcare_limits, int(user["household_size"]), 1300)
+def childcare_checks(user: dict[str, object], childcare_limits: dict[int, int], state: str) -> list[RuleCheck]:
+    """
+    Returns a list of rules to check for childcare subsidy eligibility.
+    Three rules:
+      1. Income must be under the state's childcare limit.
+      2. The parent/guardian must be working, studying, or in training.
+         (Looking for work is treated as "close" — not a hard fail.)
+      3. There must be a child under 13 in the household. (Critical — no child = instant Unlikely.)
+    """
+    # Get the income limit for this specific household size in this state.
+    limit = limit_for_household(childcare_limits, int(user["household_size"]), extra_person_amount(state, "childcare"))
     income = float(user["monthly_income"])
+    # Check if the parent has a qualifying activity (work, school, or training).
     working_or_studying = user["employment_status"] in {"Working", "In school or job training", "Working and in school"}
     return [
         income_check(income, limit, "Income is within the sample child-care limit"),
@@ -3030,35 +3685,139 @@ def childcare_checks(user: dict[str, object], childcare_limits: dict[int, int]) 
             working_or_studying,
             "Parent or caregiver is working, in school, or in job training.",
             "Child-care programs usually require a parent to work, study, or train.",
-            close=user["employment_status"] == "Looking for work",
+            close=user["employment_status"] == "Looking for work",  # "close" = not fully passing but borderline
         ),
         RuleCheck(
             "Child age",
             bool(user["child_under_13"]),
             "A child in the household is under age 13.",
             "This sample child-care subsidy is focused on children under age 13.",
-            critical=True,
+            critical=True,  # critical=True means failing this alone causes "Unlikely" status
         ),
     ]
 
 
-def food_checks(user: dict[str, object], food_limits: dict[int, int]) -> list[RuleCheck]:
-    limit = limit_for_household(food_limits, int(user["household_size"]), 897)
-    income = float(user["monthly_income"])
-    return [
-        income_check(income, limit, "Income is within the sample food assistance limit"),
-        RuleCheck(
-            "Residency",
-            bool(user["resident"]),
-            "Household meets the sample residency condition.",
-            "Food assistance often requires US residency or qualified non-citizen status.",
-            critical=True,
-        ),
-    ]
+def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
+    """
+    Checks eligibility for two food assistance programs simultaneously:
+
+      SNAP (Supplemental Nutrition Assistance Program, a.k.a. food stamps):
+        - Income limit = 100% FPL × state's BBCE multiplier (e.g. 1.65 for Texas)
+        - Multiplier comes from SNAP_STATE_MULTIPLIERS; defaults to 2.00 for broad states
+
+      WIC (Women, Infants, and Children):
+        - Only checked if there's a child under 5 in the household
+        - Income limit = 100% FPL × 1.85 (fixed nationally at 185%)
+
+    Alaska and Hawaii get their own higher FPL base tables because the federal
+    government publishes separate poverty thresholds for those two states.
+
+    Returns a ProgramResult directly (skips the generic classify_program step)
+    because the dual-path logic and custom explanations don't fit the standard
+    RuleCheck model used by other programs.
+    """
+    # Pull the four things we need from the user's form data.
+    household_size = int(user["household_size"])
+    gross_income = float(user["monthly_income"])
+    has_child_under_5 = bool(user.get("child_under_5", False))  # defaults False for old drafts
+    resident = bool(user["resident"])
+
+    # Step 1: Pick the right FPL base table for this state.
+    # Alaska and Hawaii have higher FPL values published by HHS.
+    # Everyone else uses the standard continental US FPL table.
+    if state == "Alaska":
+        base_fpl = ALASKA_FPL_BASE
+        extra_person = ALASKA_FPL_EXTRA_PERSON
+    elif state == "Hawaii":
+        base_fpl = HAWAII_FPL_BASE
+        extra_person = HAWAII_FPL_EXTRA_PERSON
+    else:
+        base_fpl = FPL_100_LIMITS
+        extra_person = FPL_BASE_EXTRA_PERSON_AMOUNTS["food"]
+
+    # Step 2: Look up the 100% FPL dollar amount for this household size.
+    # If the household is bigger than 8, extend the table by adding extra_person per head.
+    fpl_100 = limit_for_household(base_fpl, household_size, extra_person)
+
+    # Step 3: Calculate the actual income limits for each program.
+    snap_multiplier = SNAP_STATE_MULTIPLIERS.get(state, 2.00)  # 2.00 = 200% for broad states
+    snap_limit = fpl_100 * snap_multiplier   # e.g. $2,750 × 1.65 = $4,537 for TX family of 4
+    wic_limit = fpl_100 * 1.85              # e.g. $2,750 × 1.85 = $5,088 nationally
+    snap_pct = int(snap_multiplier * 100)    # e.g. 1.65 → 165 (used in explanation text)
+
+    # Step 4: Residency is a hard requirement for both programs. Fail immediately if not met.
+    if not resident:
+        return ProgramResult(
+            status="Unlikely",
+            explanation="You may not qualify for food assistance based on this estimate because food assistance often requires US residency or qualified non-citizen status.",
+            passed=[],
+            missed=["Food assistance often requires US residency or qualified non-citizen status."],
+        )
+
+    # Step 5: Check both program paths independently.
+    snap_eligible = gross_income <= snap_limit
+    # WIC requires: child under 5 OR pregnant OR postpartum OR breastfeeding
+    has_wic_criterion = (
+        has_child_under_5 or 
+        user.get("pregnant", False) or 
+        user.get("postpartum", False) or 
+        user.get("breastfeeding", False)
+    )
+    wic_eligible = has_wic_criterion and gross_income <= wic_limit
+
+    # Step 6: If they qualify for either (or both), return a Highly eligible result.
+    if snap_eligible or wic_eligible:
+        # Build a list like ["SNAP (165% limit)", "WIC (185% limit)"]
+        programs_qualified = []
+        if snap_eligible:
+            programs_qualified.append(f"SNAP ({snap_pct}% limit)")
+        if wic_eligible:
+            programs_qualified.append("WIC (185% limit)")
+        qual_str = " and ".join(programs_qualified)  # e.g. "SNAP (165% limit) and WIC (185% limit)"
+        explanation = f"Eligible for {qual_str}."
+        # If income is above 100% FPL but still under the SNAP ceiling, warn that the
+        # actual SNAP benefit amount is calculated after deducting rent and childcare.
+        if gross_income > fpl_100:
+            explanation += " Note: Actual SNAP benefits depend on the Net Income Test (income minus rent/childcare)."
+        return ProgramResult(
+            status="Highly eligible",
+            explanation=explanation,
+            passed=[
+                f"Income qualifies for {qual_str}: {format_money(gross_income)}/month.",
+                "Household meets the sample residency condition.",
+            ],
+            missed=[],
+        )
+
+    # Step 7: Not eligible for either — check if they're "close" (within 15% of a limit).
+    # "Close" triggers "Partially eligible" instead of "Unlikely".
+    close = gross_income <= snap_limit * 1.15 or (has_wic_criterion and gross_income <= wic_limit * 1.15)
+    # Build a human-readable explanation of why they didn't qualify.
+    reason = (
+        f"Income is above the food assistance limits: {format_money(gross_income)}/month vs. "
+        f"SNAP limit {format_money(snap_limit)} ({snap_pct}%)"
+    )
+    if has_wic_criterion:
+        reason += f" and WIC limit {format_money(wic_limit)} (185%)"
+    reason += "."
+    return ProgramResult(
+        status="Partially eligible" if close else "Unlikely",
+        explanation=f"You may not qualify for food assistance based on this estimate because {reason}",
+        passed=["Household meets the sample residency condition."],
+        missed=[reason],
+    )
 
 
-def utility_checks(user: dict[str, object], utility_limits: dict[int, int]) -> list[RuleCheck]:
-    limit = limit_for_household(utility_limits, int(user["household_size"]), 910)
+def utility_checks(user: dict[str, object], utility_limits: dict[int, int], state: str) -> list[RuleCheck]:
+    """
+    Three rules for utility bill assistance:
+      1. Income must be under whichever is higher — the state limit or 150% FPL.
+      2. Household must report a bill hardship (past-due bill or shutoff notice).
+      3. Must be a US resident or qualified non-citizen. (Critical — instant Unlikely if not.)
+    """
+    household_size = int(user["household_size"])
+    # Use the higher of state limit vs. 150% FPL — see utility_eligibility_limit().
+    limit = utility_eligibility_limit(utility_limits, household_size, state)
     income = float(user["monthly_income"])
     return [
         income_check(income, limit, "Income is within the sample utility assistance limit"),
@@ -3078,8 +3837,15 @@ def utility_checks(user: dict[str, object], utility_limits: dict[int, int]) -> l
     ]
 
 
-def internet_checks(user: dict[str, object], internet_limits: dict[int, int]) -> list[RuleCheck]:
-    limit = limit_for_household(internet_limits, int(user["household_size"]), 897)
+def internet_checks(user: dict[str, object], internet_limits: dict[int, int], state: str) -> list[RuleCheck]:
+    """
+    Three rules for internet subsidy eligibility:
+      1. Income must be under 200% FPL (the same limit for all states).
+      2. Household must have a qualifying reason for needing internet (work, school, health, benefits).
+      3. Must be a US resident. (Critical — instant Unlikely if not.)
+    """
+    # Internet uses a federal uniform limit — same for all states (200% FPL).
+    limit = limit_for_household(internet_limits, int(user["household_size"]), extra_person_amount(state, "internet"))
     income = float(user["monthly_income"])
     return [
         income_check(income, limit, "Income is within the sample internet subsidy limit"),
@@ -3099,9 +3865,17 @@ def internet_checks(user: dict[str, object], internet_limits: dict[int, int]) ->
     ]
 
 
-def transportation_checks(user: dict[str, object], transportation_limits: dict[int, int]) -> list[RuleCheck]:
-    limit = limit_for_household(transportation_limits, int(user["household_size"]), 780)
+def transportation_checks(user: dict[str, object], transportation_limits: dict[int, int], state: str) -> list[RuleCheck]:
+    """
+    Three rules for transportation voucher eligibility:
+      1. Income must be under the state's transportation limit.
+      2. Household must report a transportation need (work, school, medical).
+      3. Applicant must have an active reason — working, studying, job-seeking, or a senior.
+         (Retired is treated as "close" — not a hard fail.)
+    """
+    limit = limit_for_household(transportation_limits, int(user["household_size"]), extra_person_amount(state, "transportation"))
     income = float(user["monthly_income"])
+    # These statuses count as "actively needing" transportation assistance.
     active_status = user["employment_status"] in {
         "Working",
         "In school or job training",
@@ -3118,15 +3892,18 @@ def transportation_checks(user: dict[str, object], transportation_limits: dict[i
         ),
         RuleCheck(
             "Activity",
-            active_status or user["age_range"] == "Senior",
+            active_status or user["age_range"] == "Senior",  # seniors qualify automatically
             "Applicant has a work, school, job-search, or senior mobility reason.",
             "Transportation vouchers usually need a work, school, job-search, medical, or senior mobility reason.",
-            close=user["employment_status"] == "Retired",
+            close=user["employment_status"] == "Retired",  # retired is borderline — not a hard fail
         ),
     ]
 
 
 def income_check(income: float, limit: float, label: str) -> RuleCheck:
+    # Reusable helper that builds a standard income rule check.
+    # "close" is True if the income is within 15% above the limit — used to
+    # show "Partially eligible" instead of "Unlikely" when someone is nearly there.
     return RuleCheck(
         "Income",
         income <= limit,
@@ -3137,19 +3914,34 @@ def income_check(income: float, limit: float, label: str) -> RuleCheck:
 
 
 def classify_program(program_key: str, checks: list[RuleCheck]) -> ProgramResult:
+    """
+    Takes the list of rule checks for a program and decides the overall status:
+
+      "Highly eligible"    — passed every single rule
+      "Partially eligible" — failed 1–2 rules, but all failures are "close" (borderline)
+                             OR only one rule was failed at all
+      "Unlikely"           — failed a critical rule, OR failed too many rules to be borderline
+
+    Then generates a plain-English explanation and bundles it all into a ProgramResult.
+    """
+    # Split checks into passed and failed lists.
     passed = [check.pass_text for check in checks if check.passed]
     missed = [check.fail_text for check in checks if not check.passed]
     failures = [check for check in checks if not check.passed]
-    critical_failures = [check for check in failures if check.critical]
-    close_failures = [check for check in failures if check.close]
+    critical_failures = [check for check in failures if check.critical]   # instant disqualifiers
+    close_failures = [check for check in failures if check.close]         # borderline failures
 
     if not failures:
+        # Passed everything — best possible result.
         status = "Highly eligible"
     elif critical_failures:
+        # Any critical failure (e.g. no child under 13 for childcare) = Unlikely, no exceptions.
         status = "Unlikely"
     elif len(failures) <= 2 and (len(close_failures) == len(failures) or len(failures) == 1):
+        # Failed 1–2 rules, but all of them are borderline → worth showing a partial result.
         status = "Partially eligible"
     else:
+        # Too many failures or non-borderline failures → not looking good.
         status = "Unlikely"
 
     explanation = plain_language_explanation(program_key, status, passed, missed)
@@ -3157,137 +3949,209 @@ def classify_program(program_key: str, checks: list[RuleCheck]) -> ProgramResult
 
 
 def plain_language_explanation(program_key: str, status: str, passed: list[str], missed: list[str]) -> str:
+    # Generates a single human-readable sentence summarizing the result.
+    # Food has its own custom explanation built inside food_eligibility(),
+    # so this function is only called for childcare, utility, internet, and transportation.
     program_name = PROGRAMS[program_key]["short_name"].lower()
     if status == "Highly eligible":
         return f"You likely qualify for {program_name} because the sample rules are all met."
     if status == "Partially eligible":
         return f"You may qualify for {program_name}, but one or two details need review. An office can confirm whether exceptions or alternate rules apply."
+    # Unlikely — lead with the primary reason they didn't qualify.
     primary_reason = missed[0] if missed else "multiple sample rules were not met."
     return f"You may not qualify for {program_name} based on this estimate because {primary_reason}"
 
 
 def limit_for_household(table: dict[int, int], household_size: int, extra_person_amount: int) -> int:
+    """
+    Looks up the income limit for a given household size from a table.
+    The tables only go up to 8 people. If the household is larger,
+    we extend the table by adding `extra_person_amount` for each person beyond 8.
+
+    Example: table has 8-person limit of $4,643. A 10-person household
+    would be: $4,643 + (2 × $473) = $5,589.
+    """
     if household_size in table:
         return table[household_size]
+    # Household is larger than the table — extend it.
     largest = max(table)
     return table[largest] + (household_size - largest) * extra_person_amount
 
 
 def find_locations(user_data: dict[str, object], eligibility: dict[str, ProgramResult], radius_miles: float) -> list[dict[str, object]]:
+    """
+    Find offices from the LOCATIONS list that:
+      1. Offer at least one program the user is eligible for (Highly or Partially)
+      2. Are within radius_miles of the user's ZIP/city
+
+    Returns a list of dicts sorted by distance (closest first).
+    Each dict has: "location" (the raw LOCATIONS entry), "programs" (list of matching
+    program keys), "distance" (miles as float or None), "distance_text" (readable string).
+    """
+    # Build a set of program keys the user qualifies for — only those are worth showing offices for.
     eligible_programs = {
         key
         for key, result in eligibility.items()
-        if result.status in {"Highly eligible", "Partially eligible"}
+        if result.status in {"Highly eligible", "Partially eligible"}  # skip Unlikely results
     }
+
+    # Try to get the user's (lat, lon) from their ZIP or city so we can measure distance.
     user_coord = resolve_user_coord(user_data)
-    user_zip = user_data.get("zip")
-    user_city = user_data.get("city")
+    user_zip = user_data.get("zip")     # e.g. "94085"
+    user_city = user_data.get("city")   # e.g. "sunnyvale"
     results = []
 
     for location in LOCATIONS:
+        # Only keep offices that offer at least one program the user qualifies for.
         matching_programs = [key for key in location["programs"] if key in eligible_programs]
         if not matching_programs:
-            continue
+            continue   # this office can't help — skip it
 
+        # Get the office's (lat, lon) so we can measure how far it is.
         loc_coord = ZIP_COORDS.get(location["zip"])
+        # Compute distance in miles if we have both coordinates; otherwise None.
         distance = miles_between(user_coord, loc_coord) if user_coord and loc_coord else None
+        # These are used as a fallback when we don't have coordinates.
         same_zip = user_zip and user_zip == location["zip"]
         same_city = user_city and user_city == location["city"].lower()
 
         if distance is not None:
+            # We have real coordinates — only include if within the chosen radius.
             if distance > radius_miles:
-                continue
+                continue   # too far away
         elif not (same_zip or same_city):
+            # No coordinates — only include if the ZIP or city matches exactly.
             continue
 
         results.append(
             {
-                "location": location,
-                "programs": matching_programs,
-                "distance": distance,
-                "distance_text": format_distance(distance, same_zip),
+                "location": location,               # the full office entry from LOCATIONS
+                "programs": matching_programs,      # which programs this office can help with
+                "distance": distance,               # float miles, or None if unknown
+                "distance_text": format_distance(distance, same_zip),  # e.g. "2.3 mi"
             }
         )
 
+    # Sort by distance first (9999 pushes unknowns to the bottom), then alphabetically by name.
     results.sort(key=lambda item: (9999 if item["distance"] is None else item["distance"], item["location"]["name"].lower()))
     return results
 
 
 def resolve_user_coord(user_data: dict[str, object]) -> tuple[float, float] | None:
+    """
+    Figure out the user's (latitude, longitude) from what they typed.
+    First tries to match by ZIP code, then by city name.
+    Returns None if neither is found in our coordinate tables.
+    """
     user_zip = user_data.get("zip")
     if user_zip and user_zip in ZIP_COORDS:
+        # Found their ZIP in our table — use that coordinate directly.
         return ZIP_COORDS[str(user_zip)]
     city = user_data.get("city")
     if city and str(city).lower() in CITY_COORDS:
+        # Found their city — use the city's center coordinate.
         return CITY_COORDS[str(city).lower()]
+    # Neither ZIP nor city matched — we can't place them on a map.
     return None
 
 
 def miles_between(start: tuple[float, float] | None, end: tuple[float, float] | None) -> float | None:
+    """
+    Calculate the straight-line distance in miles between two (lat, lon) points
+    using the Haversine formula. This is the standard way to get accurate
+    distances on a sphere (the Earth) from coordinates.
+
+    Returns None if either coordinate is missing.
+    """
     if not start or not end:
-        return None
+        return None   # can't measure without both points
+    # Convert degrees → radians because Python's math functions expect radians.
     lat1, lon1 = map(math.radians, start)
     lat2, lon2 = map(math.radians, end)
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
+    # Haversine formula — calculates the great-circle distance between two points.
+    dlat = lat2 - lat1   # difference in latitude
+    dlon = lon2 - lon1   # difference in longitude
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return 3958.8 * c
+    return 3958.8 * c   # 3958.8 = Earth's radius in miles
 
 
 def format_distance(distance: float | None, same_zip: bool | None = False) -> str:
+    """
+    Convert a raw mile distance into a human-friendly label for display.
+    Used in the location cards (e.g. "2.3 mi", "same ZIP", "nearby").
+    """
     if same_zip:
-        return "same ZIP"
+        return "same ZIP"       # user and office share a ZIP — very close
     if distance is None:
-        return "nearby"
+        return "nearby"         # no coords available — just say nearby
     if distance < 0.2:
-        return "same area"
-    return f"{distance:.1f} mi"
+        return "same area"      # under a quarter mile — basically next door
+    return f"{distance:.1f} mi"  # e.g. "4.7 mi"
 
 
 def format_money(value: float) -> str:
+    """Format a dollar amount with a $ sign and thousands comma. No cents.
+    Example: 1330.0 → "$1,330"   |   12750.5 → "$12,751"
+    """
     return f"${value:,.0f}"
 
 
 def append_case_history(
-    path: Path,
-    selected_programs: list[str],
-    user_data: dict[str, object],
-    eligibility: dict[str, ProgramResult],
-    locations: list[dict[str, object]],
-    radius: str,
+    path: Path,                                    # path to the CSV file on disk
+    selected_programs: list[str],                  # which programs were checked
+    user_data: dict[str, object],                  # the household's profile
+    eligibility: dict[str, ProgramResult],         # the eligibility results
+    locations: list[dict[str, object]],            # nearby offices found
+    radius: str,                                   # search radius in miles (as a string)
 ) -> None:
+    """
+    Append one row to the case history CSV file.
+
+    Each row is a snapshot of a single screening session — who was screened,
+    which programs were checked, and what the results were. This lets staff
+    review usage over time without storing any personally identifiable info.
+
+    The CSV is created automatically if it doesn't exist yet.
+    New rows are always appended (not overwritten) so history is never lost.
+    """
+    # Check if the file already exists so we know whether to write the header row.
     file_exists = path.exists()
+    # Open in append mode ("a") so existing rows are never overwritten.
     with path.open("a", newline="", encoding="utf-8") as file:
+        # DictWriter lets us write dicts as rows, using the fieldnames as column headers.
         writer = csv.DictWriter(
             file,
             fieldnames=[
-                "timestamp",
-                "selected_programs",
-                "monthly_income",
-                "household_size",
-                "location",
-                "age_range",
-                "employment_status",
-                "radius_miles",
-                "eligibility",
-                "location_count",
+                "timestamp",          # when this screening happened
+                "selected_programs",  # which programs the user checked
+                "monthly_income",     # monthly gross income entered
+                "household_size",     # number of people in the household
+                "location",           # ZIP or city the user entered
+                "age_range",          # age group of the applicant
+                "employment_status",  # their employment situation
+                "radius_miles",       # how wide the office search was
+                "eligibility",        # results per program (e.g. "food: Highly eligible")
+                "location_count",     # how many nearby offices were found
             ],
         )
+        # Only write the header once — when the file is brand new.
         if not file_exists:
             writer.writeheader()
+        # Write one row for this session.
         writer.writerow(
             {
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-                "selected_programs": "; ".join(selected_programs),
-                "monthly_income": f"{float(user_data['monthly_income']):.2f}",
-                "household_size": user_data["household_size"],
-                "location": user_data["location_input"],
-                "age_range": user_data["age_range"],
-                "employment_status": user_data["employment_status"],
-                "radius_miles": radius,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),   # e.g. "2026-04-29T14:23:00"
+                "selected_programs": "; ".join(selected_programs),           # e.g. "food; utility"
+                "monthly_income": f"{float(user_data['monthly_income']):.2f}",  # e.g. "2750.00"
+                "household_size": user_data["household_size"],               # e.g. 4
+                "location": user_data["location_input"],                     # what the user typed
+                "age_range": user_data["age_range"],                         # e.g. "Adult"
+                "employment_status": user_data["employment_status"],         # e.g. "Working"
+                "radius_miles": radius,                                      # e.g. "10"
+                # Compact summary of all results — e.g. "food: Highly eligible; utility: Unlikely"
                 "eligibility": "; ".join(f"{key}: {result.status}" for key, result in eligibility.items()),
-                "location_count": len(locations),
+                "location_count": len(locations),                            # e.g. 3
             }
         )
 
@@ -3400,6 +4264,25 @@ def _html_checklist(items: list[str]) -> str:
     return f'<ul style="list-style:none;padding:0;margin:0;">{rows}</ul>'
 
 
+def _get_program_display_name(program_key: str, result: ProgramResult) -> str:
+    """Extract specific program names (SNAP/WIC, etc.) from eligibility result if available."""
+    if program_key == "food" and result.passed:
+        for passed_item in result.passed:
+            if "qualifies for" in passed_item.lower():
+                # Extract program name from "Income qualifies for SNAP (165% limit)"
+                # or "Income qualifies for SNAP (165% limit) and WIC (185% limit)"
+                start_idx = passed_item.lower().find("qualifies for")
+                if start_idx != -1:
+                    start_idx += len("qualifies for")
+                    end_idx = passed_item.find(":", start_idx)
+                    if end_idx == -1:
+                        end_idx = passed_item.find(".", start_idx)
+                    if end_idx != -1:
+                        programs_text = passed_item[start_idx:end_idx].strip()
+                        return f"Food: {programs_text}"
+    return PROGRAMS[program_key]["name"]
+
+
 def build_draft_application(
     selected_programs: list[str],
     user_data: dict[str, object],
@@ -3418,6 +4301,7 @@ def build_draft_application(
     employment = user_data.get("employment_status", "")
     resident = "Yes" if user_data.get("resident") else "No"
     child_u13 = "Yes" if user_data.get("child_under_13") else "No"
+    child_u5 = "Yes" if user_data.get("child_under_5") else "No"
     utility_hardship = "Yes" if user_data.get("utility_hardship") else "No"
     internet_need = "Yes" if user_data.get("internet_need") else "No"
     transport_need = "Yes" if user_data.get("transportation_need") else "No"
@@ -3427,7 +4311,7 @@ def build_draft_application(
         f'<div style="display:flex;align-items:center;gap:12px;padding:12px 0;'
         f'border-bottom:1px solid #f1f5f9;">'
         f'<span style="font-weight:600;color:#1e293b;min-width:190px;">'
-        f'{PROGRAMS[k]["name"]}</span>'
+        f'{_get_program_display_name(k, eligibility[k])}</span>'
         f'{_html_badge(eligibility[k].status)}</div>'
         for k in selected_programs
     )
@@ -3623,6 +4507,10 @@ def build_draft_application(
           <td style="padding:9px 0;font-weight:600;border-bottom:1px solid #f1f5f9;">{child_u13}</td>
         </tr>
         <tr>
+          <td style="padding:9px 0;color:#64748b;border-bottom:1px solid #f1f5f9;">Child under 5 (WIC)</td>
+          <td style="padding:9px 0;font-weight:600;border-bottom:1px solid #f1f5f9;">{child_u5}</td>
+        </tr>
+        <tr>
           <td style="padding:9px 0;color:#64748b;border-bottom:1px solid #f1f5f9;">Utility hardship</td>
           <td style="padding:9px 0;font-weight:600;border-bottom:1px solid #f1f5f9;">{utility_hardship}</td>
           <td style="padding:9px 0;color:#64748b;border-bottom:1px solid #f1f5f9;">Internet need</td>
@@ -3683,19 +4571,40 @@ def summarize_location_results(items: list[dict[str, object]]) -> str:
 
 
 def clamp(value: int, low: int, high: int) -> int:
+    """Keep `value` between `low` and `high` (inclusive).
+    Example: clamp(150, 9, 22) → 22    |    clamp(5, 9, 22) → 9
+    Used mainly to keep font sizes from going crazy in accessibility mode.
+    """
     return max(low, min(high, value))
 
 
 def safe_get_program_short_names(program_keys: list[str]) -> str:
+    """Turn a list of program keys into a comma-separated string of short names.
+    Skips any key that isn't in the PROGRAMS dict so unknown keys don't crash the app.
+    Example: ["food", "utility"] → "Food, Utilities"
+    """
     return ", ".join(PROGRAMS[key]["short_name"] for key in program_keys if key in PROGRAMS)
 
 
 def sanitize_location_text(text: str) -> str:
+    """Strip leading/trailing whitespace and collapse multiple spaces into one.
+    Example: "  San   Jose  " → "San Jose"
+    Used before displaying or saving location strings.
+    """
     return " ".join(text.strip().split())
 
 
+# ===========================================================================
+# ENTRY POINT
+# ---------------------------------------------------------------------------
+# Python only runs the code below if this file is executed directly
+# (e.g. `python BenefitBridge.py`). If the file is imported by another
+# script, this block is skipped — important for testing and packaging.
+# ===========================================================================
 if __name__ == "__main__":
+    # Create the main application window (which calls __init__ and builds the UI).
     app = BenefitBridgeApp()
+    # Hand control to Tk's event loop — this runs forever until the window is closed.
     app.mainloop()
 
 

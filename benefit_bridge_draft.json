@@ -1,0 +1,26 @@
+{
+  "saved_at": "2026-05-03T22:37:19",
+  "step": 2,
+  "programs": {
+    "childcare": false,
+    "food": true,
+    "utility": false,
+    "internet": false,
+    "transportation": false
+  },
+  "name": "bob",
+  "income": "4000",
+  "income_period": "Monthly",
+  "household": 3,
+  "location": "95117",
+  "state": "California",
+  "age": "Adult",
+  "employment": "Working",
+  "resident": true,
+  "healthy": true,
+  "child_under_13": true,
+  "child_under_5": false,
+  "utility_hardship": false,
+  "internet_need": true,
+  "transportation_need": false
+}
