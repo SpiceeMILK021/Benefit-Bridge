@@ -1,0 +1,47 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pillow
+
+      - name: Convert icon to .ico
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('icon.icns')
+          img.save('icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+          "
+
+      - name: Build EXE
+        run: |
+          pyinstaller --noconsole --windowed --onefile `
+            --icon="icon.ico" `
+            --add-data "benefit_bridge_logo.png;." `
+            --add-data "locations.json;." `
+            --add-data "zip_data.py;." `
+            --add-data "uszips.csv;." `
+            BenefitBridge.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenefitBridge-Windows
+          path: dist/BenefitBridge.exe
