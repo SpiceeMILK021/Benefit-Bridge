@@ -1,102 +1,100 @@
 
 
-# Lets us use newer type-hint styles (like `list[str]`) on older Python.
+# this lets us use newer python type hints (like list[str]) even on older python versions
 from __future__ import annotations
 
-# Tools we use throughout the file:
-import csv          # for saving the case history spreadsheet
-import json         # for saving/loading settings and drafts
-import html         # for escaping applicant names in generated HTML
-import math         # for math like square roots and rounding
-import re           # for finding patterns in text (like a 5-digit ZIP)
-import sys          # to check what operating system we're on
-import uuid         # to make a random session ID
-import webbrowser   # to open Google Maps in the browser
-import os           # for checking if files exist and making folders
+# these are the standard python libraries we need throughout the whole file
+import csv          # for writing and reading csv spreadsheet files (the case history log)
+import json         # for reading and writing json files (settings, drafts, exports)
+import html         # for safely embedding user text inside html so special characters don't break anything
+import math         # for math operations like ceiling and square root
+import re           # for searching text with patterns (like finding a 5 digit zip code)
+import sys          # for checking runtime info like the frozen pyinstaller path
+import uuid         # for generating a random unique session id each time the app starts
+import webbrowser   # for opening a url in the user's default web browser (google maps links)
+import os           # for working with file paths and checking if files or folders exist
 
 try:
+    # try to import pillow, which lets us load and resize images like the logo
     from PIL import Image, ImageTk
 except ImportError:
+    # if pillow is not installed, set both to none so the rest of the code can check for that
     Image = None
     ImageTk = None
 
 
-# A shortcut for making simple "record" classes.
+# dataclass is a shortcut for making simple data container classes with less boilerplate
 from dataclasses import dataclass
-# For getting the current date and time.
+# datetime lets us get the current date and time and format it as a string
 from datetime import datetime
-# Lets us make a function that already has some arguments filled in.
+# partial lets us pre fill some arguments of a function and use the result like a new function
 from functools import partial
-# A nicer way to work with file paths.
+# path makes working with file and folder paths much cleaner than raw strings
 from pathlib import Path
-# Turns text like "123 Main St" into a URL-safe form.
+# quote_plus turns text like "123 main st" into url safe form like "123+main+st"
 from urllib.parse import quote_plus
 
-# Tkinter = Python's built-in tool for making windows and buttons.
-from tkinter import filedialog, messagebox, ttk   # save dialogs, popups, fancy widgets
-from tkinter import font as tkfont                # for working with fonts
-import tkinter as tk                              # the main tkinter module
-from zip_data import ZIP_COORDS, CITY_COORDS
+# tkinter is python's built in gui toolkit for making windows buttons and widgets
+from tkinter import filedialog, messagebox, ttk   # file save dialogs, popup dialogs, and themed widgets
+from tkinter import font as tkfont                # for measuring and working with fonts
+import tkinter as tk                              # the main tkinter module that everything builds on
+from zip_data import ZIP_COORDS, CITY_COORDS      # our lookup tables that map zip codes and city names to coordinates
 
 
-# ===========================================================================
-# FILE STRUCTURE OVERVIEW
-# ---------------------------------------------------------------------------
-# 1) Application file paths and local storage
-# 2) Program metadata, sample income limits, and state rules
-# 3) Office location data and ZIP/city coordinate helpers
-# 4) UI choice lists and theme constants
-# 5) Runtime helpers, dataclasses, and widget utilities
-# 6) Persistence, eligibility rules, and location search
-# 7) Draft export builder and main Tkinter app class
-# ===========================================================================
+# this file is organized into these main sections:
+# 1. application file paths and local storage
+# 2. program metadata, sample income limits, and state rules
+# 3. office location data and zip and city coordinate helpers
+# 4. ui choice lists and theme constants
+# 5. runtime helpers, dataclasses, and widget utilities
+# 6. persistence, eligibility rules, and location search
+# 7. draft export builder and main tkinter app class
 
 
-
-# ===========================================================================
-# SECTION 1 — APPLICATION FILES AND STORAGE
-# ---------------------------------------------------------------------------
-# File paths and file names used for settings, drafts, exports, and history.
-# ===========================================================================
-# The folder this script lives in. Everything we save goes here.
-# ===========================================================================
-# SECTION 1 — APPLICATION FILES AND STORAGE
-# ---------------------------------------------------------------------------
+# section 1: application files and storage
+# these are all the file paths and names used for settings, drafts, exports, and history
 
 def resource_path(relative_path):
+    # when the app is bundled by pyinstaller, files are unpacked to sys._meipass at runtime
+    # when running as a regular python script, we just use the folder the script lives in
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
+    # join the base folder with whatever relative path was asked for
     return os.path.join(base_path, relative_path)
 
-# This makes the app find your logo on ANY computer
+# the base folder where we look for bundled files and also where we save user data
 APP_DIR = Path(resource_path("."))
+# the expected location of the logo image file
 BRAND_LOGO_PATH = Path(resource_path("benefit_bridge_logo.png"))
 
-# This fixes the "not defined" error by giving the code the list it's looking for
+# a list of places to look for the logo; we try each one until we find one that exists
 BRAND_LOGO_CANDIDATES = [BRAND_LOGO_PATH]
 
-# These stay the same
+# the path to the csv file where each eligibility check session gets logged
 CASE_HISTORY_FILE = APP_DIR / "benefit_bridge_case_history.csv"
+# the path to the json file where user settings like font size are saved
 SETTINGS_FILE = APP_DIR / "benefit_bridge_settings.json"
+# the path to the json file where an in progress form is auto saved as a draft
 DRAFT_FILE = APP_DIR / "benefit_bridge_draft.json"
+# the path to the json file where the user's favorite office locations are saved
 FAVORITES_FILE = APP_DIR / "benefit_bridge_favorites.json"
+# the folder where json exports of full sessions are saved
 EXPORT_DIR = APP_DIR / "exports"
+# the tagline that shows up in the header and about box
 BRAND_SLOGAN = "You're Closer Than You Think"
 
-# Spanish translations keyed by English source text.
-# Untranslated strings gracefully fall back to English.
+# this dictionary maps every english string in the ui to its spanish translation
+# when the user switches to spanish mode, the app looks up each string here
+# if a string is not in here yet, the app just shows the original english text as a fallback
 SPANISH: dict[str, str] = {
-    # Slogan / header
     "You're Closer Than You Think": "Estás más cerca de lo que crees",
-    # Rail
     "Progress": "Progreso",
     "1. Choose subsidies": "1. Elegir subsidios",
     "2. Household profile": "2. Perfil del hogar",
     "3. Results & offices": "3. Resultados",
     "Sample rules only — always confirm with the office before applying.": "Solo reglas de muestra — confirme siempre con la oficina antes de solicitar.",
-    # Nav buttons
     "Back": "Atrás",
     "Start over": "Comenzar de nuevo",
     "Save draft": "Guardar borrador",
@@ -104,7 +102,6 @@ SPANISH: dict[str, str] = {
     "Continue": "Continuar",
     "Check Eligibility": "Verificar elegibilidad",
     "Draft Application": "Borrador de solicitud",
-    # Step 0 — Program picker
     "Welcome": "Bienvenido",
     "Pick programs, answer one shared profile, then review eligibility, offices, and a printable packing list.": "Selecciona programas, responde un perfil y revisa elegibilidad, oficinas y lista de documentos.",
     "Smart reuse": "Reutilización inteligente",
@@ -118,7 +115,6 @@ SPANISH: dict[str, str] = {
     "Select all": "Seleccionar todo",
     "Clear": "Limpiar",
     "Suggest common bundle": "Sugerir paquete común",
-    # Program names and short names
     "Child-care subsidy": "Subsidio de cuidado infantil",
     "Child care": "Cuidado infantil",
     "Help paying for licensed care while a parent works or studies.": "Ayuda para pagar el cuidado mientras un padre trabaja o estudia.",
@@ -134,10 +130,8 @@ SPANISH: dict[str, str] = {
     "Other: transportation vouchers": "Vales de transporte",
     "Transport": "Transporte",
     "Transit passes or rides for work, school, or medical needs.": "Pases de tránsito para trabajo, escuela o citas médicas.",
-    # Estimator
     "Quick eligibility snapshot": "Resumen rápido de elegibilidad",
     "Typical income limits, family of 4": "Límites de ingresos para familia de 4",
-    # Step 1 — Info screen
     "Household profile": "Perfil del hogar",
     "Answer once — every selected program reuses this profile. You can go back and edit before running the check.": "Responde una vez — cada programa seleccionado usa este perfil.",
     "Tip: enter any 5-digit ZIP from the expanded demo set (e.g. 95125, 94110, 90026, 92104, 95825, 93722, 92806) for distance math; cities still match by name.": "Consejo: ingresa un código postal de 5 dígitos para calcular distancias; las ciudades también funcionan por nombre.",
@@ -174,7 +168,6 @@ SPANISH: dict[str, str] = {
     "Used by transportation vouchers.": "Usado en los vales de transporte.",
     "Selected programs": "Programas seleccionados",
     "None yet": "Ninguno todavía",
-    # Step 2 — Results
     "Results workspace": "Espacio de resultados",
     "Estimates only — not a government decision. Use filters, what-if income, maps, and exports to prepare a real visit.": "Solo estimados — no es una decisión gubernamental. Use filtros, ingresos hipotéticos, mapas y exportaciones.",
     "Highly eligible": "Muy elegible",
@@ -211,13 +204,10 @@ SPANISH: dict[str, str] = {
     "★ Saved": "★ Guardado",
     "Rules met": "Reglas cumplidas",
     "Needs review": "Necesita revisión",
-    # What-changed
     "No change at {pct:.0f}% — all programs stay the same": "Sin cambios — todos los programas se mantienen igual",
-    # Print list
     "No offices": "Sin oficinas",
     "No offices in current filter view.": "No hay oficinas en la vista actual.",
     "Office list opened in browser — use your browser's Print function": "Lista de oficinas abierta en el navegador — use la función Imprimir",
-    # Misc
     "Ready": "Listo",
     "Step 1 of 3": "Paso 1 de 3",
     "Step 2 of 3": "Paso 2 de 3",
@@ -225,83 +215,58 @@ SPANISH: dict[str, str] = {
 }
 
 
-# ===========================================================================
-# PROGRAM DEFINITIONS
-# ---------------------------------------------------------------------------
-# The five assistance programs this app can screen for.
-# This dict is the single source of truth for program names, descriptions,
-# and display colors. Every other part of the code references this dict
-# by key (e.g. "food", "childcare") rather than repeating the display text.
-#
-# Keys inside each program:
-#   "name"        — Full title shown on the step 1 checkboxes and result cards.
-#   "short_name"  — Short label used inside pills, lists, and compact spaces.
-#   "description" — One-line plain-English description shown in tooltips/cards.
-#   "color"       — Hex accent color for the colored swatch beside the checkbox.
-# ===========================================================================
+# section 2: the five assistance programs this app can check eligibility for
+# this dictionary is the single source of truth for all program info
+# every other part of the code looks up program names and colors from here using the key
+# each program has: name (long title), short_name (compact label), description, and color (hex accent)
 PROGRAMS = {
-    # ── Child care ────────────────────────────────────────────────────────
-    # Federal/state subsidy programs like CCDF that help working parents
-    # pay for licensed daycare or after-school care.
+    # childcare covers federal and state subsidy programs like ccdf that help working parents pay for licensed daycare
     "childcare": {
         "name": "Child-care subsidy",
         "short_name": "Child care",
         "description": "Help paying for licensed care while a parent works or studies.",
         "color": "#14b8a6",   # teal
     },
-    # ── Food ─────────────────────────────────────────────────────────────
-    # Covers SNAP (food stamps) and WIC. Both are checked simultaneously
-    # in food_eligibility() using state-specific income limits.
+    # food covers snap (food stamps) and wic; both are checked using state specific income limits
     "food": {
         "name": "Food assistance / SNAP-like program",
         "short_name": "Food",
         "description": "Monthly grocery support for households under income limits.",
         "color": "#3b82f6",   # blue
     },
-    # ── Utility ──────────────────────────────────────────────────────────
-    # Programs like LIHEAP that help households pay electric, gas, or water
-    # bills — especially if they have a shutoff notice.
+    # utility covers programs like liheap that help pay electric gas or water bills especially with a shutoff notice
     "utility": {
         "name": "Utility bill help",
         "short_name": "Utilities",
         "description": "Energy, water, or emergency bill support.",
         "color": "#f97316",   # orange
     },
-    # ── Internet ─────────────────────────────────────────────────────────
-    # Programs like ACP (Affordable Connectivity Program) that subsidize
-    # home internet for low-income households.
+    # internet covers programs like the affordable connectivity program that subsidize home internet for low income households
     "internet": {
         "name": "Internet subsidy",
         "short_name": "Internet",
         "description": "Low-cost internet or digital access support.",
         "color": "#8b5cf6",   # purple
     },
-    # ── Transportation ────────────────────────────────────────────────────
-    # State transit voucher programs — bus passes, rideshare credits, or
-    # medical transport help for work, school, or appointments.
+    # transportation covers state transit voucher programs like bus passes or rideshare credits for work school or appointments
     "transportation": {
         "name": "Other: transportation vouchers",
         "short_name": "Transport",
         "description": "Transit passes or rides for work, school, or medical needs.",
-        "color": "#f43f5e",   # rose/red
+        "color": "#f43f5e",   # rose red
     },
 }
 
 
 
-# ===========================================================================
-# FEDERAL POVERTY LINE (FPL) TABLES
-# ---------------------------------------------------------------------------
-# The FPL is a number the US government publishes every year that defines
-# what "poverty" means for a given household size. Programs use a multiple
-# of it (like 130%, 185%, 200%) as their income cutoff.
-#
-# These are MONTHLY dollar amounts (annual FPL ÷ 12), rounded.
-# Key: household size (number of people). Value: monthly income limit in $.
-# ===========================================================================
+# federal poverty line tables
+# the fpl is a dollar amount the us government publishes each year that defines what "poverty" means for a given family size
+# benefits programs use a multiple of this number (like 130% or 200%) as their income cutoff
+# the values below are monthly dollar amounts (the annual fpl divided by 12 then rounded)
+# the dictionary key is the number of people in the household and the value is the monthly income limit in dollars
 
-# 100% FPL — the raw poverty line. Most programs use a multiple of this.
-# Example: a family of 4 earning $2,750/month or less is at 100% FPL.
+# 100% fpl is the raw poverty line; most programs use a multiple of this
+# for example a family of 4 earning 2750 dollars per month or less is at exactly 100% fpl
 FPL_BASE_LIMITS = {
     1: 1330,
     2: 1803,
@@ -313,93 +278,75 @@ FPL_BASE_LIMITS = {
     8: 4643,
 }
 
-# 200% FPL — double the poverty line. Used for internet subsidies.
-# Example: family of 4 limit becomes $5,500/month.
+# 200% fpl is double the poverty line and is used for internet subsidy income limits
+# so a family of 4 has a limit of about 5500 dollars per month at this level
 FPL_200_LIMITS = {size: amount * 2 for size, amount in FPL_BASE_LIMITS.items()}
 
-# 150% FPL — one-and-a-half times the poverty line. Used as a floor for utility programs.
+# 150% fpl is one and a half times the poverty line and is used as the floor for utility program limits
 FPL_150_LIMITS = {size: amount * 1.5 for size, amount in FPL_BASE_LIMITS.items()}
 
-# Alias so food eligibility code can reference the base as "FPL_100" for clarity.
+# this is just another name for the base fpl table so the food eligibility code can reference it clearly
 FPL_100_LIMITS = FPL_BASE_LIMITS
 
-# ---------------------------------------------------------------------------
-# Alaska and Hawaii FPL tables
-# ---------------------------------------------------------------------------
-# The federal government publishes SEPARATE, HIGHER FPL numbers for Alaska
-# and Hawaii because the cost of living there is significantly higher than
-# the continental US. Alaska is ~25% higher; Hawaii is ~15% higher.
-# These are the 100% FPL monthly values for those two states.
-# The per-person "extra" amount is added for households larger than 8 people.
-# ---------------------------------------------------------------------------
+# alaska and hawaii fpl tables
+# the federal government publishes separate higher fpl numbers for alaska and hawaii
+# because the cost of living there is much higher than the rest of the country
+# alaska is about 25% higher and hawaii is about 15% higher
+# these tables only go up to 8 people; for bigger households you add the extra person amount
 
 ALASKA_FPL_BASE = {1: 1662, 2: 2254, 3: 2846, 4: 3438, 5: 4030, 6: 4622, 7: 5214, 8: 5806}
-ALASKA_FPL_EXTRA_PERSON = 592   # add this per person beyond 8
+ALASKA_FPL_EXTRA_PERSON = 592   # add this amount per person when the household is bigger than 8
 
 HAWAII_FPL_BASE = {1: 1528, 2: 2073, 3: 2618, 4: 3163, 5: 3708, 6: 4253, 7: 4798, 8: 5343}
-HAWAII_FPL_EXTRA_PERSON = 545   # add this per person beyond 8
+HAWAII_FPL_EXTRA_PERSON = 545   # add this amount per person when the household is bigger than 8
 
-# ---------------------------------------------------------------------------
-# SNAP Gross Income Test Multipliers by State (2026 BBCE Rules)
-# ---------------------------------------------------------------------------
-# SNAP (food stamps) has a federal gross income test at 130% FPL. However,
-# most states have adopted "Broad-Based Categorical Eligibility" (BBCE),
-# which lets them raise that ceiling. This dict maps each state to its
-# actual multiplier. States NOT listed here use the 200% default (the most
-# generous tier, used by big states like CA, NY, FL, etc.).
-#
-# Example: Texas uses 1.65, so a family of 4 can earn up to
-#   $2,750 (100% FPL) × 1.65 = $4,537/month and still qualify for SNAP.
-# ---------------------------------------------------------------------------
+# snap gross income test multipliers by state (2026 bbce rules)
+# snap normally has a federal gross income cutoff at 130% fpl
+# but most states have adopted broad based categorical eligibility (bbce) which lets them raise that ceiling
+# this dictionary maps each state to its actual snap income multiplier
+# states not listed here default to 200% which is the most generous level used by big states like california new york and florida
+# example: texas uses 1.65 so a family of 4 earning up to 4537 dollars per month can still qualify for snap
 SNAP_STATE_MULTIPLIERS: dict[str, float] = {
-    # 130% — strictest states; use the federal minimum with no BBCE expansion
+    # 130% are the strictest states that use the federal minimum with no bbce expansion
     "Alabama": 1.30, "Arkansas": 1.30, "Georgia": 1.30, "Idaho": 1.30,
     "Indiana": 1.30, "Kansas": 1.30, "Mississippi": 1.30, "Missouri": 1.30,
     "Ohio": 1.30, "Oklahoma": 1.30, "South Carolina": 1.30, "South Dakota": 1.30,
     "Tennessee": 1.30, "Utah": 1.30, "Wyoming": 1.30,
-    # 160%
+    # iowa uses 160%
     "Iowa": 1.60,
-    # 165%
+    # these states use 165%
     "Illinois": 1.65, "Nebraska": 1.65, "Texas": 1.65,
-    # 185%
+    # these states use 185%
     "Arizona": 1.85, "New Jersey": 1.85, "Rhode Island": 1.85, "Vermont": 1.85,
-    # All other states (CA, NY, FL, WA, etc.) default to 2.00 — see food_eligibility()
+    # all other states not listed here default to 200% inside food_eligibility()
 }
 
 
 
 
 
-# ---------------------------------------------------------------------------
-# Extra-person amounts
-# ---------------------------------------------------------------------------
-# The FPL tables above only go up to 8 people. For households larger than 8,
-# we extend the table by adding a fixed dollar amount for each extra person.
-# These are the 100% FPL "per additional person" amounts, used as a base.
-# Food uses this directly; internet doubles it (since it uses 200% FPL).
-# ---------------------------------------------------------------------------
+# extra person amounts for households bigger than 8 people
+# the fpl tables above only go up to 8 people
+# for households with 9 or more people we add a fixed dollar amount per extra person
+# these are the 100% fpl "per additional person" dollar values used as the starting point
+# food uses this directly; internet doubles it since internet uses 200% fpl
 FPL_BASE_EXTRA_PERSON_AMOUNTS = {
-    "food": 473,       # $473/month per person beyond 8, at 100% FPL
-    "internet": 473,   # same base — will be doubled for 200% FPL below
+    "food": 473,       # 473 dollars per month per person beyond 8 at 100% fpl
+    "internet": 473,   # same base amount, gets doubled to 200% fpl below
 }
 
-# 200% versions of the above — used by internet subsidy calculations.
+# the 200% fpl versions of the extra person amounts used by internet subsidy calculations
 FPL_EXTRA_PERSON_AMOUNTS = {program: amount * 2 for program, amount in FPL_BASE_EXTRA_PERSON_AMOUNTS.items()}
 
-# 150% version of the food extra-person amount — used by the utility floor calculation.
+# the 150% fpl version of the food extra person amount used when calculating the utility program floor
 FPL_150_EXTRA_PERSON_AMOUNT = FPL_BASE_EXTRA_PERSON_AMOUNTS["food"] * 1.5
 
-# ---------------------------------------------------------------------------
-# State-specific extra-person increments (for childcare, utility, transportation)
-# ---------------------------------------------------------------------------
-# When a household has more than 8 people, we look up how much to add per
-# extra person from this table. These are derived from real state program data:
-#   - Childcare: from CCDF 2025 (difference between family-of-4 and family-of-3 limits)
-#   - Utility: estimated from LIHEAP state data
-#   - Transportation: estimated from state transit-assistance data
-# Food and internet are NOT in this table — food uses SNAP logic, internet uses
-# the federal 200% FPL amount above.
-# ---------------------------------------------------------------------------
+# state specific extra person increments for childcare, utility, and transportation
+# when a household has more than 8 people this table tells us how much to add per extra person
+# childcare values come from ccdf 2025 data (difference between family of 4 and family of 3 limits)
+# utility values are estimated from liheap state data
+# transportation values are estimated from state transit assistance data
+# food and internet are not in this table; food uses snap logic and internet uses the federal 200% fpl amount above
 STATE_EXTRA_PERSON_AMOUNTS: dict[str, dict[str, int]] = {
     "Alabama": {"childcare": 771, "utility": 154, "transportation": 700},
     "Alaska": {"childcare": 1180, "utility": 209, "transportation": 1000},
@@ -454,23 +401,16 @@ STATE_EXTRA_PERSON_AMOUNTS: dict[str, dict[str, int]] = {
     "Wyoming": {"childcare": 785, "utility": 172, "transportation": 750},
 }
 
-# ===========================================================================
-# STATE INCOME LIMITS TABLE
-# ---------------------------------------------------------------------------
-# This is the main lookup table the app uses to decide if someone qualifies.
-# For each state, it stores the monthly gross income limits for each program.
-#
-# How to read it: if a family of 4 in Alabama earns less than $4,500/month,
-# they are under the childcare limit for Alabama.
-#
-# Sources:
-#   - Childcare:      CCDF eligibility thresholds (2026)
-#   - Utility:        LIHEAP — higher of 150% FPL or 60% State Median Income
-#   - Internet:       200% FPL (federal, uniform across all states)
-#   - Transportation: State transit-assistance program thresholds (estimated)
-#   - Food:           NOT in this table — handled separately by food_eligibility()
-#                     using SNAP_STATE_MULTIPLIERS and the FPL tables above.
-# ===========================================================================
+# state income limits table
+# this is the main lookup table the app uses to decide if someone might qualify for a program
+# for each state it stores monthly gross income limits organized by program and household size
+# how to read it: if a family of 4 in alabama earns less than 4500 dollars per month they are under the childcare limit
+# sources for these numbers:
+#   childcare: ccdf eligibility thresholds from 2026
+#   utility: liheap, set to the higher of 150% fpl or 60% of the state median income
+#   internet: 200% fpl, which is the same federal standard in every state
+#   transportation: state transit assistance program thresholds (estimated)
+#   food: not in this table at all; it is handled separately by food_eligibility() using snap_state_multipliers
 STATE_LIMITS = {
     "Alabama": {
         "childcare":      {1: 2187, 2: 2958, 3: 3729, 4: 4500, 5: 5271, 6: 6042, 7: 6813, 8: 7584},
@@ -780,20 +720,16 @@ STATE_LIMITS = {
     },
 }
 
-# ===========================================================================
-# SECTION 3 — SERVICE LOCATIONS
-# ---------------------------------------------------------------------------
-# Loaded from locations.json — add new offices there without editing code.
-# ===========================================================================
+# section 3: service locations
+# all office locations are stored in locations.json so you can add new offices without touching this python file
+# we load that file right now at startup and store the list in memory
 with open(resource_path("locations.json"), encoding="utf-8") as _lf:
     LOCATIONS: list[dict] = json.load(_lf)
 
-# ===========================================================================
-# SECTION 5 — FORM CHOICE OPTIONS
-# ---------------------------------------------------------------------------
-# Lists used to populate dropdowns and selection controls in the form.
-# ===========================================================================
-# Choices for the "Employment" dropdown on step 2.
+# section 5: form choice options
+# these are the lists that fill in the dropdown menus on the household profile form
+
+# choices for the employment status dropdown on step 2
 EMPLOYMENT_OPTIONS = [
     "Working",
     "In school or job training",
@@ -803,36 +739,34 @@ EMPLOYMENT_OPTIONS = [
     "Retired",
 ]
 
-# Choices for the "Age range" dropdown.
+# choices for the age range dropdown
 AGE_OPTIONS = ["Child", "Adult", "Senior"]
-#Choices for "State" dropdown.
+# choices for the state dropdown covering all us states and territories
 STATE_OPTIONS = ["Alabama", "Alaska", "American Samoa", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Guam", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Minor Outlying Islands", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Northern Mariana Islands", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Puerto Rico", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "U.S. Virgin Islands", "Utah", "Vermont",("Virginia"), ("Washington"), ("West Virginia"), ("Wisconsin"), ("Wyoming")]
-# Choices for the "Search radius (miles)" dropdown on the results screen.
+# choices for the office search radius dropdown on the results screen (in miles)
 RADIUS_OPTIONS = ["5", "10", "25", "50", "100"]
 
-# ===========================================================================
-# SECTION 6 — APP THEME AND VISUAL CONSTANTS
-# ---------------------------------------------------------------------------
-# Colors, version text, and visual palette mappings used by the UI throughout.
-# ===========================================================================
-# Version number shown in the About box and the footer.
+# section 6: app theme and visual constants
+# these are all the colors, the version number, and the visual palette used throughout the ui
+
+# version number shown in the about popup and the footer
 APP_VERSION = "2.0.0"
 
-# Background color for each eligibility status pill.
+# background color for each eligibility status pill badge
 STATUS_COLORS = {
-    "Highly eligible": "#134e2a",     # dark green
-    "Partially eligible": "#5c4510",  # dark amber
-    "Unlikely": "#5c1f1f",            # dark red
+    "Highly eligible": "#134e2a",     # dark green background
+    "Partially eligible": "#5c4510",  # dark amber background
+    "Unlikely": "#5c1f1f",            # dark red background
 }
 
-# Text color for each pill (chosen to read clearly on the bg above).
+# text color for each pill badge chosen to be readable on the dark backgrounds above
 STATUS_TEXT_COLORS = {
     "Highly eligible": "#bbf7d0",
     "Partially eligible": "#fde68a",
     "Unlikely": "#fecaca",
 }
 
-# Shorter labels for narrow pill chips so the text doesn't get cut off.
+# shorter label text for each status used in narrow pill chips where the full text would get cut off
 STATUS_PILL_SHORT = {
     "Highly eligible": "High match",
     "Partially eligible": "Partial",
@@ -841,58 +775,56 @@ STATUS_PILL_SHORT = {
 
 
 def status_pill_caption(full_status: str) -> str:
-    # Look up the short caption; if not found, just use the full status.
+    # look up the short label for a status; fall back to the full status text if it is not in the table
     return STATUS_PILL_SHORT.get(full_status, full_status)
 
 
-# ---------------------------------------------------------------------------
-# Dark theme color palette. Every color in the UI comes from here.
-# ---------------------------------------------------------------------------
-ACCENT = "#38bdf8"          # bright sky blue — main highlight
-ACCENT_DIM = "#0ea5e9"      # darker version of accent
-ACCENT_GLOW = "#22d3ee"     # cyan glow used for hover rings
-APP_BG = "#0a0e14"          # main app background (very dark)
-APP_BG_ELEVATED = "#0f141c" # slightly lighter bg (for footer)
-CARD_BG = "#121826"         # background of cards
-CARD_BG_HOVER = "#171d2e"   # card bg when hovered
-RAIL_BG = "#0d1118"         # left progress rail background
-BORDER = "#2a3447"          # subtle borders around cards/inputs
-BORDER_FOCUS = ACCENT       # border color when an input is focused
-TEXT = "#e8eef9"            # main text color (near-white)
-MUTED = "#94a3b8"           # secondary/hint text (gray)
-SUBTEXT = "#c5d1e8"         # body paragraph text
-PRIMARY = "#3b82f6"         # primary button color
-PRIMARY_HOVER = "#2563eb"   # primary button when hovered
-PRIMARY_PRESSED = "#1d4ed8" # primary button while clicked
-INPUT_BG = "#1a2233"        # background for text inputs
-HEADER_BG = "#0f141c"       # top header bar bg
-SHADOW = "#05070a"          # very dark shadow under cards
-SUCCESS = "#34d399"         # green for "good" stats
-WARNING = "#fbbf24"         # yellow for "needs review"
+# dark theme color palette; every color used anywhere in the ui comes from this list of constants
+ACCENT = "#38bdf8"          # bright sky blue used as the main highlight color
+ACCENT_DIM = "#0ea5e9"      # a slightly darker blue used as a secondary highlight
+ACCENT_GLOW = "#22d3ee"     # cyan used for glowing hover rings around focused elements
+APP_BG = "#0a0e14"          # the main app background color (very dark near black)
+APP_BG_ELEVATED = "#0f141c" # slightly lighter background used for the footer bar
+CARD_BG = "#121826"         # background color of content cards
+CARD_BG_HOVER = "#171d2e"   # card background when the mouse is hovering over it
+RAIL_BG = "#0d1118"         # background color of the left progress rail sidebar
+BORDER = "#2a3447"          # subtle border color drawn around cards and input fields
+BORDER_FOCUS = ACCENT       # border color used when an input field has keyboard focus
+TEXT = "#e8eef9"            # main text color (near white)
+MUTED = "#94a3b8"           # secondary or hint text color (medium gray)
+SUBTEXT = "#c5d1e8"         # body paragraph text color (slightly dimmer than main text)
+PRIMARY = "#3b82f6"         # blue color for primary action buttons
+PRIMARY_HOVER = "#2563eb"   # primary button color when the mouse is hovering over it
+PRIMARY_PRESSED = "#1d4ed8" # primary button color while the user is clicking it
+INPUT_BG = "#1a2233"        # background color for text input fields
+HEADER_BG = "#0f141c"       # background color of the top header bar
+SHADOW = "#05070a"          # very dark color used for drop shadows under cards
+SUCCESS = "#34d399"         # green color used to indicate a good or passing result
+WARNING = "#fbbf24"         # yellow color used to flag something that needs attention
 
 
 def preferred_ui_font(tk_ref: tk.Misc | None = None) -> str:
-    """Pick the first nice-looking font that's actually installed.
-    If we just used "Helvetica" everywhere, on some systems Tk would fall back
-    to an ugly default. So we ask Tk what fonts exist and pick the best one."""
-    # Use the given Tk widget as a reference, or fall back to the default root.
+    """pick the nicest font that is actually installed on this computer.
+    we ask tkinter what fonts are available and return the first one from our preference list.
+    this prevents ugly fallback fonts on systems that do not have our first choice."""
+    # use the given tk widget as a reference point for the font query, or fall back to the default root window
     ref = tk_ref if tk_ref is not None else getattr(tk, "_default_root", None)
     if ref is None:
-        # Tk isn't running yet — return a safe default.
+        # tkinter is not running yet so we cannot query fonts; return a safe fallback
         return "Helvetica"
-    # Get the set of font names installed on this system.
+    # get the set of all font family names installed on this system
     families = set(tkfont.families(ref))
-    # Try each preferred font in order and return the first one that exists.
+    # go through our preferred fonts in order and return the first one that is actually installed
     for name in (".SF NS Text", "SF Pro Text", "Segoe UI", "Helvetica Neue", "Avenir Next"):
         if name in families:
             return name
     return "Helvetica"
 
 
-# Default font family. Gets replaced with a nicer one once Tk starts up.
+# placeholder font family used before tkinter starts; replaced with a nicer font once the app window opens
 FONT_FAMILY = "Helvetica"
 
-# For each program, the documents the user should bring to an office visit.
+# for each program this lists the documents the user should bring when they visit an office
 PROGRAM_CHECKLISTS: dict[str, list[str]] = {
     "childcare": [
         "Photo ID for parent or guardian",
@@ -924,7 +856,7 @@ PROGRAM_CHECKLISTS: dict[str, list[str]] = {
     ],
 }
 
-# Items everyone should bring no matter which program they're applying for.
+# documents that everyone should bring regardless of which program they are applying for
 MASTER_DOCUMENT_LIST = [
     "Government-issued photo ID for each adult applying",
     "Social Security cards or numbers for household members (if required locally)",
@@ -934,37 +866,35 @@ MASTER_DOCUMENT_LIST = [
 ]
 
 
-# ===========================================================================
-# SECTION 7 — DATA CONTAINERS
-# ---------------------------------------------------------------------------
-# Small dataclasses used to store eligibility checks and program results.
-# ===========================================================================
-# A single rule we check against the user (e.g. "is income under the limit?").
-# Stores the result of the check plus the text to show if it passed or failed.
+# section 7: data containers
+# these are small dataclasses used to store the results of eligibility checks
+
+# a single rule that gets checked against the user such as "is your income under the limit?"
+# it stores whether the check passed and what text to show for either outcome
 @dataclass
 class RuleCheck:
-    name: str           # short label like "Income"
-    passed: bool        # True if the user passed this rule
-    pass_text: str      # text to show when the rule passes
-    fail_text: str      # text to show when the rule fails
-    close: bool = False     # True if the user is "almost" passing
-    critical: bool = False  # True if failing this rule alone disqualifies them
+    name: str           # short label for this rule like "income"
+    passed: bool        # true if the user passed this rule
+    pass_text: str      # the message to show the user when they pass this rule
+    fail_text: str      # the message to show the user when they fail this rule
+    close: bool = False     # true if the user is close to passing but not quite there
+    critical: bool = False  # true if failing this one rule alone means they definitely do not qualify
 
 
-# The combined result for one program (after running all its rules).
+# the combined result for one program after running all of its rules
 @dataclass
 class ProgramResult:
-    status: str             # "Highly eligible", "Partially eligible", or "Unlikely"
-    explanation: str        # plain-English summary
-    passed: list[str]       # list of pass texts from rules they met
-    missed: list[str]       # list of fail texts from rules they didn't meet
+    status: str             # one of "highly eligible", "partially eligible", or "unlikely"
+    explanation: str        # a plain english summary sentence shown to the user
+    passed: list[str]       # list of all the pass messages from rules the user met
+    missed: list[str]       # list of all the fail messages from rules the user did not meet
 
 
 def draw_rounded_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int, radius: int, **kwargs) -> int:
-    """Draw a rectangle with rounded corners on a Tk canvas.
-    Tk has no built-in rounded rectangle, so we fake one by drawing a
-    smoothed polygon whose corner points are pulled in by `radius` pixels."""
-    # The list of (x, y) points that outline the rounded rectangle.
+    """draw a rectangle with rounded corners on a tkinter canvas.
+    tkinter has no built in rounded rectangle shape, so we fake one by drawing a
+    smoothed polygon and pulling each corner inward by the radius amount."""
+    # build the list of x y points that trace the outline of the rounded rectangle
     points = [
         x1 + radius, y1,
         x2 - radius, y1,
@@ -979,82 +909,83 @@ def draw_rounded_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int, rad
         x1, y1 + radius,
         x1, y1,
     ]
-    # smooth=True tells Tk to round off the corners.
+    # smooth=true tells tkinter to curve the corners of the polygon
     return canvas.create_polygon(points, smooth=True, **kwargs)
 
 
 def widget_background(widget: tk.Widget, fallback: str = APP_BG) -> str:
-    """Get the background color of a Tk widget, with a safe fallback if Tk errors out."""
+    """get the background color of a tkinter widget, with a safe fallback color if tkinter throws an error."""
     try:
         return str(widget.cget("bg"))
     except tk.TclError:
-        # Some widgets don't support "bg" — return the fallback color instead.
+        # some widgets do not support the bg option so we return the fallback color instead
         return fallback
 
 
 class RoundedCard(tk.Frame):
-    """A card with rounded corners. Tk frames are always rectangular, so we
-    cheat: we draw the rounded shape on a Canvas, then put a regular Frame
-    on top of it for the actual content."""
+    """a card widget that appears to have rounded corners.
+    tkinter frames are always rectangular, so we fake the look by drawing a
+    rounded shape on a canvas and then placing a regular frame on top of it for the content."""
 
     def __init__(self, parent: tk.Widget, background: str = APP_BG) -> None:
-        # Set up this widget as a normal frame with no border or highlight.
+        # initialize this as a regular frame with no border or highlight ring
         super().__init__(parent, bg=background, bd=0, highlightthickness=0)
-        self.radius = 22   # how rounded the corners are (in pixels)
-        self.margin = 8    # gap between the rounded shape and the inner content
-        # The canvas is where we draw the rounded background + shadow.
+        self.radius = 22   # how many pixels of rounding the corners get
+        self.margin = 8    # the gap in pixels between the rounded shape and the content inside
+        # the canvas is the drawing surface where we paint the rounded background shape and shadow
         self.canvas = tk.Canvas(self, bg=background, bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
-        # The body frame sits on top of the canvas — this is where real widgets go.
+        # the body frame sits on top of the canvas and this is where you put the actual child widgets
         self.body = tk.Frame(self.canvas, bg=CARD_BG, bd=0, highlightthickness=0)
-        # Place the body frame on the canvas at (margin, margin).
+        # embed the body frame inside the canvas at position (margin, margin) measured from the top left
         self.window_id = self.canvas.create_window((self.margin, self.margin), window=self.body, anchor="nw")
-        # Whenever the canvas resizes, redraw the rounded shape.
+        # whenever the canvas size changes, redraw the rounded shape to match
         self.canvas.bind("<Configure>", self._redraw)
-        # Whenever the body grows (more widgets added), resize the canvas to match.
+        # whenever the body grows because more widgets were added, grow the canvas to match
         self.body.bind("<Configure>", self._sync_size)
 
     def _sync_size(self, _event: tk.Event | None = None) -> None:
-        # Make the canvas big enough to fit the body plus margins on each side.
+        # make the canvas just big enough to hold the body frame plus the margin gap on each side
         width = max(120, self.body.winfo_reqwidth() + self.margin * 2)
         height = max(60, self.body.winfo_reqheight() + self.margin * 2)
         self.canvas.configure(width=width, height=height)
         self._redraw()
 
     def _redraw(self, _event: tk.Event | None = None) -> None:
-        # Pick the bigger of the canvas size and the body size, so we always cover everything.
+        # figure out how big we need to draw by taking the larger of the canvas size vs the body size
         width = max(self.canvas.winfo_width(), self.body.winfo_reqwidth() + self.margin * 2)
         height = max(self.canvas.winfo_height(), self.body.winfo_reqheight() + self.margin * 2)
-        # Wipe the old shape so we can draw fresh.
+        # wipe anything previously drawn on the canvas before redrawing
         self.canvas.delete("card-shape")
-        # First, draw a slightly offset dark shape to act as a soft drop shadow.
+        # draw a slightly offset dark rounded shape first to create a soft drop shadow effect
         draw_rounded_rect(self.canvas, self.margin + 2, self.margin + 3, width - 2, height - 2, self.radius, fill=SHADOW, outline="", tags="card-shape")
-        # Then draw the real card on top of the shadow.
+        # draw the actual card shape on top of the shadow
         draw_rounded_rect(self.canvas, self.margin, self.margin, width - 4, height - 5, self.radius, fill=CARD_BG, outline=BORDER, width=1, tags="card-shape")
-        # Move the card-shape behind the body frame so the body widgets show on top.
+        # push the drawn shapes behind the body frame so the widgets inside the body show on top
         self.canvas.tag_lower("card-shape")
-        # Tell the body frame how wide it can be, and reposition it.
+        # tell the body frame how wide it is allowed to be and set its position
         self.canvas.itemconfigure(self.window_id, width=max(1, width - self.margin * 2))
         self.canvas.coords(self.window_id, self.margin, self.margin)
 
 
 class ModernCheckbox(tk.Frame):
-    """A beautiful modern checkbox with rounded corners, smooth animations, and reactive hover effects."""
-    
-    def __init__(self, parent: tk.Widget, text: str = "", variable: tk.BooleanVar | None = None, 
+    """a custom checkbox widget that looks modern with a colored checked state and a hover glow effect."""
+
+    def __init__(self, parent: tk.Widget, text: str = "", variable: tk.BooleanVar | None = None,
                  command: callable | None = None, bg: str = CARD_BG, fg: str = TEXT) -> None:
         super().__init__(parent, bg=bg)
-        
+
+        # use the provided variable or create a new boolean variable starting at false
         self.variable = variable or tk.BooleanVar(value=False)
         self.command = command
         self.bg_color = bg
         self.fg_color = fg
-        
-        # Create checkbox container (clickable area)
+
+        # the container frame that holds the drawn checkbox square
         self.checkbox_frame = tk.Frame(self, bg=bg)
         self.checkbox_frame.pack(side="left", anchor="w")
-        
-        # Create the checkbox canvas
+
+        # a small canvas where we draw the checkbox box and checkmark ourselves
         self.checkbox_canvas = tk.Canvas(
             self.checkbox_frame,
             width=24, height=24,
@@ -1064,8 +995,8 @@ class ModernCheckbox(tk.Frame):
             cursor="hand2"
         )
         self.checkbox_canvas.pack(pady=2)
-        
-        # Create label
+
+        # if a text label was given, place it to the right of the checkbox box
         if text:
             self.label = tk.Label(
                 self,
@@ -1076,47 +1007,53 @@ class ModernCheckbox(tk.Frame):
                 cursor="hand2"
             )
             self.label.pack(side="left", anchor="w", padx=(8, 0))
-        
-        # Animation state
+
+        # track whether the mouse is currently over this widget for hover styling
         self._hover = False
         self._animation_id = None
-        
-        # Bind events
+
+        # connect mouse events so the checkbox responds to hover and clicks
         self.checkbox_canvas.bind("<Enter>", self._on_hover)
         self.checkbox_canvas.bind("<Leave>", self._on_leave)
         self.checkbox_canvas.bind("<Button-1>", self._on_click)
         if text:
+            # also respond to hovering and clicking the text label next to the box
             self.label.bind("<Enter>", self._on_hover)
             self.label.bind("<Leave>", self._on_leave)
             self.label.bind("<Button-1>", self._on_click)
-        
+
+        # whenever the variable changes (checked or unchecked) redraw the checkbox
         self.variable.trace("w", lambda *args: self._redraw())
         self._redraw()
-    
+
     def _on_hover(self, _event=None):
+        # mouse entered the widget, switch to hover appearance
         self._hover = True
         self._redraw()
-    
+
     def _on_leave(self, _event=None):
+        # mouse left the widget, switch back to normal appearance
         self._hover = False
         self._redraw()
-    
+
     def _on_click(self, _event=None):
+        # toggle the checked state when clicked
         self.variable.set(not self.variable.get())
         if self.command:
             self.command()
-    
+
     def _redraw(self):
+        # erase the canvas and draw fresh based on current state
         self.checkbox_canvas.delete("all")
-        
+
         is_checked = self.variable.get()
         size = 24
-        
-        # Outer rounded rect (border)
+
+        # pick border and fill colors based on whether the box is checked or hovered
         border_color = "#4f46e5" if is_checked else ("#cbd5e1" if self._hover else "#d1d5db")
         bg_color = "#4f46e5" if is_checked else ("#f0f9ff" if self._hover else "white")
-        
-        # Draw rounded box (simplified as regular rect for better macOS support)
+
+        # draw the main box shape (simplified to a rectangle for better macos compatibility)
         self.checkbox_canvas.create_rectangle(
             2, 2, size-2, size-2,
             fill=bg_color,
@@ -1124,8 +1061,8 @@ class ModernCheckbox(tk.Frame):
             width=2,
             tags="box"
         )
-        
-        # Add slight glow on hover
+
+        # draw a faint outer glow rectangle when hovered but not yet checked
         if self._hover and not is_checked:
             self.checkbox_canvas.create_rectangle(
                 1, 1, size-1, size-1,
@@ -1134,59 +1071,57 @@ class ModernCheckbox(tk.Frame):
                 width=1,
                 tags="glow"
             )
-        
-        # Draw checkmark if checked
+
+        # draw the white checkmark lines when the box is checked
         if is_checked:
-            # Draw a nice checkmark
             checkmark_color = "white"
-            # Checkmark path: two lines forming an L shape
+            # two lines form the checkmark: a short diagonal going down then a longer one going up
             self.checkbox_canvas.create_line(6, 12, 10, 16, fill=checkmark_color, width=2, tags="check")
             self.checkbox_canvas.create_line(10, 16, 18, 6, fill=checkmark_color, width=2, tags="check")
 
 
 class PillLabel(tk.Canvas):
-    """A small rounded badge with text inside (like the 'High match' chip).
-    We use a Canvas so we can draw the rounded shape ourselves."""
+    """a small rounded badge widget with text inside, like the "high match" chip.
+    we use a canvas so we can draw the rounded pill shape ourselves."""
 
     def __init__(self, parent: tk.Widget, text: str, fill: str, foreground: str, background: str = CARD_BG) -> None:
-        # Start as a plain canvas with no border.
+        # initialize as a plain canvas with no visible border
         super().__init__(parent, bg=background, bd=0, highlightthickness=0)
-        # Save the colors and text so we can redraw later if they change.
-        self._fill = fill                # pill background color
-        self._foreground = foreground    # text color
-        self._background = background    # area outside the pill
+        # save all the display properties so we can redraw if they change later
+        self._fill = fill                # the background color of the pill shape itself
+        self._foreground = foreground    # the text color inside the pill
+        self._background = background    # the color of the area outside the pill shape
         self._text = text
-        # Create the bold font used for the pill text.
+        # create the bold font used for the short label inside the pill
         self._pill_font = tkfont.Font(family=FONT_FAMILY, size=10, weight="bold")
         self._redraw_pill()
 
     def set_text(self, text: str) -> None:
-        # Public method: change the text and redraw.
+        # update the pill text and redraw it
         self._text = text
         self._redraw_pill()
 
     def _redraw_pill(self) -> None:
-        # Erase whatever is on the canvas right now.
+        # wipe the canvas before redrawing
         self.delete("all")
         text = self._text
-        # Measure the text and add padding so the pill fits the text snugly.
+        # measure how wide the text is and add padding so the pill fits the text snugly
         width = self._pill_font.measure(text) + 36
         height = self._pill_font.metrics("linespace") + 16
-        # Resize the canvas to match the pill size.
+        # resize the canvas to exactly match the pill size we just calculated
         super().configure(width=width, height=height, bg=self._background)
-        # Draw the rounded background.
+        # draw the rounded pill shape as a filled rounded rectangle
         draw_rounded_rect(self, 1, 1, width - 1, height - 1, 16, fill=self._fill, outline="")
-        # Draw the text in the center of the pill.
+        # draw the label text centered inside the pill
         self.create_text(width // 2, height // 2, text=text, fill=self._foreground, font=self._pill_font)
 
 
 class ModernButton(tk.Canvas):
-    """A custom button drawn on a Canvas. We use a canvas instead of Tk's
-    built-in button so we can have rounded corners and hover effects."""
+    """a custom button widget drawn on a canvas so it can have rounded corners and hover color effects.
+    tkinter's built in button cannot do rounded corners so we draw it ourselves."""
 
-    # Color sets for the four button styles. Each style has colors for
-    # the normal, hover (mouse over), and pressed (clicked) states, plus
-    # a foreground (text) color.
+    # color sets for the four button style variants
+    # each style has colors for normal state, hover (mouse over), and pressed (clicked), plus the text color
     THEMES = {
         "primary": {"normal": PRIMARY, "hover": PRIMARY_HOVER, "pressed": PRIMARY_PRESSED, "fg": "#f8fafc"},
         "secondary": {"normal": "#1e293b", "hover": "#273549", "pressed": "#334155", "fg": TEXT},
@@ -1195,162 +1130,163 @@ class ModernButton(tk.Canvas):
     }
 
     def __init__(self, parent: tk.Widget, text: str, command, variant: str = "secondary", background: str | None = None) -> None:
-        # Save the basic info about this button.
-        self.text = text         # the label
-        self.command = command   # the function to call when clicked
-        self.variant = variant   # which color theme to use ("primary"/"secondary"/etc.)
-        self.state = "normal"    # "normal" or "disabled"
-        # Bold font for the button label.
+        # store the basic properties of this button
+        self.text = text         # the label text shown on the button
+        self.command = command   # the function to call when the user clicks
+        self.variant = variant   # the color style to use, such as "primary", "secondary", "ghost", or "accent"
+        self.state = "normal"    # either "normal" or "disabled"
+        # bold font for the text label on the button
         self.button_font = tkfont.Font(family=FONT_FAMILY, size=11, weight="bold")
         self.height = 48         # button height in pixels
-        self.pad_x = 38          # horizontal padding around the text
-        self._corner_r = 18      # corner radius
-        # If the caller didn't say what background color to use, copy the parent's.
+        self.pad_x = 38          # horizontal padding added on each side of the text
+        self._corner_r = 18      # how rounded the button corners are
+        # if no background color was given, copy the background color of the parent widget
         self.background = background or widget_background(parent)
-        # Calculate how wide the button needs to be to fit its text + padding.
+        # calculate the width needed to fit the text plus the left and right padding
         width = self._width_for_text(text)
-        # Initialize the underlying canvas.
+        # initialize the underlying canvas with the right size, background, and hand cursor
         super().__init__(parent, width=width, height=self.height, bg=self.background, bd=0, highlightthickness=0, cursor="hand2")
-        self._hover = False  # tracks whether the mouse is over the button
-        # Connect mouse events to handler methods.
-        self.bind("<Enter>", self._on_enter)                    # mouse enters
-        self.bind("<Leave>", self._on_leave)                    # mouse leaves
-        self.bind("<ButtonPress-1>", lambda _event: self._draw("pressed"))  # mouse clicks down
-        self.bind("<ButtonRelease-1>", self._release)           # mouse clicks up
-        # Draw the button in its normal state to start.
+        self._hover = False  # tracks whether the mouse is currently over the button
+        # hook up mouse events to the drawing methods
+        self.bind("<Enter>", self._on_enter)                    # fires when the mouse enters the button area
+        self.bind("<Leave>", self._on_leave)                    # fires when the mouse leaves the button area
+        self.bind("<ButtonPress-1>", lambda _event: self._draw("pressed"))  # fires when the mouse button presses down
+        self.bind("<ButtonRelease-1>", self._release)           # fires when the mouse button is released
+        # draw the button in its starting normal state
         self._draw("normal")
 
     def _on_enter(self, _event: tk.Event) -> None:
-        # Mouse moved onto the button — switch to hover style.
+        # the mouse moved onto the button so switch to the hover appearance
         self._hover = True
         self._draw("hover")
 
     def _on_leave(self, _event: tk.Event) -> None:
-        # Mouse moved off the button — back to normal.
+        # the mouse moved off the button so go back to the normal appearance
         self._hover = False
         self._draw("normal")
 
     def _width_for_text(self, text: str) -> int:
-        # Measure the text and pad it. Always at least 96px wide.
+        # measure the text width in pixels and add padding on both sides; always at least 96 pixels wide
         return max(96, self.button_font.measure(text) + self.pad_x * 2)
 
     def _release(self, _event: tk.Event) -> None:
-        # Mouse let go of click. If the button is enabled, run the command.
+        # the mouse button was released; if the button is enabled run the command
         if self.state != "disabled" and self.command:
             self.command()
-        # After click, go back to "hover" if the mouse is still over us, else "normal".
+        # after the click, stay in hover state if the mouse is still over the button, otherwise go back to normal
         self._draw("hover" if self.state != "disabled" and self._hover else "normal")
 
     def _draw(self, mode: str) -> None:
-        # Wipe the canvas before redrawing.
+        # erase the canvas before drawing fresh
         self.delete("all")
         theme = self.THEMES[self.variant]
         disabled = self.state == "disabled"
-        # Pick the fill and text colors based on disabled vs. mode.
+        # choose fill and text colors: grayed out if disabled, otherwise use the theme colors for this mode
         fill = "#334155" if disabled else theme[mode]
         fg = "#64748b" if disabled else theme["fg"]
         width = int(self.cget("width"))
-        # If the user is hovering (and the button is enabled), draw a soft outline ring around it.
+        # when the mouse is hovering and the button is enabled, draw a soft glow ring around the outside
         r = getattr(self, "_corner_r", 18)
         if not disabled and mode == "hover":
             glow = ACCENT_GLOW if self.variant == "primary" else BORDER
             draw_rounded_rect(self, 0, 0, width, self.height, r + 2, fill="", outline=glow, width=2)
-        # Draw the actual button shape.
+        # draw the main button shape as a rounded rectangle
         draw_rounded_rect(self, 2, 2, width - 2, self.height - 2, r, fill=fill, outline="")
-        # Place the text in the center.
+        # draw the label text centered inside the button
         self.create_text(width // 2, self.height // 2, text=self.text, fill=fg, font=self.button_font)
-        # Show a hand cursor when enabled, normal arrow when disabled.
+        # show a hand cursor when the button is clickable and an arrow cursor when it is disabled
         super().configure(cursor="arrow" if disabled else "hand2")
 
     def configure(self, cnf=None, **kwargs) -> None:  # type: ignore[override]
-        """Update the button's text, state, command, etc. Mimics Tk's standard configure()."""
-        # Combine positional and keyword options into one dict.
+        """update the button's text, state, command, or other properties; works the same as tkinter's standard configure."""
+        # combine any positional config dict and keyword arguments into one dict
         options = {}
         if cnf:
             options.update(cnf)
         options.update(kwargs)
-        # If the text changed, update it and resize the button.
+        # if the text changed, update it and resize the canvas to fit the new text
         if "text" in options:
             self.text = options.pop("text")
             super().configure(width=self._width_for_text(self.text))
-        # If the state changed (e.g. disabled), save it.
+        # if the state changed (for example to disabled) save the new value
         if "state" in options:
             self.state = options.pop("state")
-        # If a new command was given, replace the old one.
+        # if a new click handler was provided, replace the old one
         if "command" in options:
             self.command = options.pop("command")
-        # Pass any leftover options through to the canvas.
+        # pass any remaining options through to the underlying canvas
         if options:
             super().configure(**options)
-        # Redraw to reflect any changes.
+        # redraw the button to reflect any changes we just made
         if hasattr(self, "button_font"):
             self._draw("normal")
 
-    # Some Tk code uses .config() instead of .configure() — make them the same.
+    # config is an alias for configure so both names work the same way
     config = configure
 
 
 class CanvasScrollbar(tk.Canvas):
-    """Modern canvas-based scrollbar with smooth rendering and robust thumb calculation."""
-    
+    """a vertical scrollbar drawn on a canvas so we can style it ourselves with a rounded thumb."""
+
     def __init__(self, parent, command=None, width=10, bg="#222", thumb_color="#888"):
         super().__init__(parent, width=width, height=1, highlightthickness=0, bg=bg)
-        
+
         self.command = command
         self.thumb_color = thumb_color
-        self._start = 0
-        self._end = 1
+        self._start = 0   # how far from the top the visible portion starts (0.0 to 1.0)
+        self._end = 1     # how far from the top the visible portion ends (0.0 to 1.0)
         self._dragging = False
-        
+
+        # connect mouse events for clicking and dragging the scrollbar thumb
         self.bind("<Button-1>", self._click)
         self.bind("<B1-Motion>", self._drag)
         self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Configure>", lambda e: self._draw())
         self.bind("<Enter>", lambda e: self.config(cursor="hand2"))
         self.bind("<Leave>", lambda e: self.config(cursor=""))
-    
+
     def set(self, start, end):
-        """Update scrollbar position."""
+        """update the scrollbar thumb position; start and end are fractions between 0.0 and 1.0."""
         self._start = max(0.0, min(1.0, float(start)))
         self._end = max(0.0, min(1.0, float(end)))
         self._draw()
-    
+
     def _draw(self):
-        """Render the scrollbar thumb."""
+        """erase and redraw the rounded scrollbar thumb at the correct position."""
         self.delete("all")
-        
+
         h = self.winfo_height()
         w = self.winfo_width()
-        
+
         if h < 4 or w < 4:
-            return  # Too small to draw
-        
-        # Calculate thumb position and size
+            return  # canvas is too small to draw anything meaningful
+
+        # figure out where the thumb starts and ends in pixel coordinates
         thumb_start = int(self._start * h)
         thumb_end = int(self._end * h)
         thumb_height = thumb_end - thumb_start
-        
-        # Minimum thumb size for usability
+
+        # enforce a minimum thumb height so it is always grabbable
         min_thumb = max(16, int(h * 0.05))
         if thumb_height < min_thumb:
             thumb_height = min_thumb
             thumb_end = thumb_start + thumb_height
-        
-        # Clamp to canvas bounds
+
+        # keep the thumb within the bounds of the canvas
         thumb_start = max(0, min(thumb_start, h - thumb_height))
         thumb_end = min(h, thumb_start + thumb_height)
-        
+
         radius = w // 2
-        
-        # Main body rectangle
+
+        # draw the middle rectangular body of the thumb
         self.create_rectangle(
             2, thumb_start + radius,
             w - 2, thumb_end - radius,
             fill=self.thumb_color,
             outline=""
         )
-        
-        # Top rounded cap
+
+        # draw the top rounded cap using an oval
         if thumb_start + 2 * radius <= thumb_end:
             self.create_oval(
                 2, thumb_start,
@@ -1358,8 +1294,8 @@ class CanvasScrollbar(tk.Canvas):
                 fill=self.thumb_color,
                 outline=""
             )
-        
-        # Bottom rounded cap
+
+        # draw the bottom rounded cap using an oval
         if thumb_end - 2 * radius >= thumb_start:
             self.create_oval(
                 2, thumb_end - 2 * radius,
@@ -1367,92 +1303,94 @@ class CanvasScrollbar(tk.Canvas):
                 fill=self.thumb_color,
                 outline=""
             )
-    
+
     def _click(self, event):
-        """Handle click on scrollbar."""
+        """start dragging when the user clicks on the scrollbar."""
         self._dragging = True
         self._drag(event)
-    
+
     def _drag(self, event):
-        """Handle dragging the thumb."""
+        """as the user drags, convert the mouse y position into a scroll fraction and notify the canvas."""
         if not self.command:
             return
-        
+
         h = self.winfo_height()
         if h <= 0:
             return
-        
+
+        # convert the y position of the mouse into a 0.0 to 1.0 fraction of the total height
         fraction = event.y / h
         fraction = max(0.0, min(1.0, fraction))
-        
+
         self.command("moveto", fraction)
-    
+
     def _release(self, _event):
-        """Handle release of mouse."""
+        """stop dragging when the user lets go of the mouse button."""
         self._dragging = False
 
 
 class HorizontalCanvasScrollbar(tk.Canvas):
-    """Modern horizontal canvas-based scrollbar with robust thumb calculation."""
-    
+    """a horizontal scrollbar drawn on a canvas so we can style it with a rounded thumb."""
+
     def __init__(self, parent, command=None, height=10, bg="#222", thumb_color="#888"):
         super().__init__(parent, height=height, width=1, highlightthickness=0, bg=bg)
-        
+
         self.command = command
         self.thumb_color = thumb_color
-        self._start = 0
-        self._end = 1
+        self._start = 0   # left edge of the visible area as a fraction from 0.0 to 1.0
+        self._end = 1     # right edge of the visible area as a fraction from 0.0 to 1.0
         self._dragging = False
-        
+
+        # connect mouse events for clicking and dragging the scrollbar thumb
         self.bind("<Button-1>", self._click)
         self.bind("<B1-Motion>", self._drag)
         self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Configure>", lambda e: self._draw())
         self.bind("<Enter>", lambda e: self.config(cursor="hand2"))
         self.bind("<Leave>", lambda e: self.config(cursor=""))
-    
+
     def set(self, start, end):
-        """Update scrollbar position."""
+        """update the scrollbar thumb position; start and end are fractions between 0.0 and 1.0."""
         self._start = max(0.0, min(1.0, float(start)))
         self._end = max(0.0, min(1.0, float(end)))
         self._draw()
-    
+
     def _draw(self):
-        """Render the scrollbar thumb."""
+        """erase and redraw the rounded horizontal scrollbar thumb at the correct position."""
         self.delete("all")
-        
+
         h = self.winfo_height()
         w = self.winfo_width()
-        
+
         if h < 4 or w < 4:
-            return  # Too small to draw
-        
-        # Calculate thumb position and size
+            return  # canvas is too small to draw anything meaningful
+
+        # convert the start and end fractions into pixel positions along the width
         thumb_start = int(self._start * w)
         thumb_end = int(self._end * w)
         thumb_width = thumb_end - thumb_start
-        
-        # Minimum thumb size for usability
+
+        # enforce a minimum thumb width so it is always easy to grab
         min_thumb = max(16, int(w * 0.05))
         if thumb_width < min_thumb:
             thumb_width = min_thumb
             thumb_end = thumb_start + thumb_width
-        
-        # Clamp to canvas bounds
+
+        # keep the thumb within the bounds of the canvas
         thumb_start = max(0, min(thumb_start, w - thumb_width))
         thumb_end = min(w, thumb_start + thumb_width)
-        
+
         radius = h // 2
-        
-        # Main body rectangle
+
+        # draw the middle rectangular body of the thumb
         self.create_rectangle(
             thumb_start + radius, 2,
             thumb_end - radius, h - 2,
             fill=self.thumb_color,
             outline=""
         )
-        
-        # Left rounded cap
+
+        # draw the left rounded cap using an oval
         if thumb_start + 2 * radius <= thumb_end:
             self.create_oval(
                 thumb_start, 2,
@@ -1460,8 +1398,8 @@ class HorizontalCanvasScrollbar(tk.Canvas):
                 fill=self.thumb_color,
                 outline=""
             )
-        
-        # Right rounded cap
+
+        # draw the right rounded cap using an oval
         if thumb_end - 2 * radius >= thumb_start:
             self.create_oval(
                 thumb_end - 2 * radius, 2,
@@ -1469,33 +1407,34 @@ class HorizontalCanvasScrollbar(tk.Canvas):
                 fill=self.thumb_color,
                 outline=""
             )
-    
+
     def _click(self, event):
-        """Handle click on scrollbar."""
+        """start dragging when the user clicks on the scrollbar."""
         self._dragging = True
         self._drag(event)
-    
+
     def _drag(self, event):
-        """Handle dragging the thumb."""
+        """as the user drags, convert the mouse x position into a scroll fraction and notify the canvas."""
         if not self.command:
             return
-        
+
         w = self.winfo_width()
         if w <= 0:
             return
-        
+
+        # convert the x position of the mouse into a 0.0 to 1.0 fraction of the total width
         fraction = event.x / w
         fraction = max(0.0, min(1.0, fraction))
-        
+
         self.command("moveto", fraction)
-    
+
     def _release(self, _event):
-        """Handle release of mouse."""
+        """stop dragging when the user releases the mouse button."""
         self._dragging = False
 
 
 class HorizontalScrollableFrame(ttk.Frame):
-    """Custom horizontally scrollable frame with smooth scrolling and keyboard support."""
+    """a frame that can scroll horizontally; useful for rows of cards that are wider than the window."""
 
     _active = None
     _wheel_bound = False
@@ -1505,7 +1444,7 @@ class HorizontalScrollableFrame(ttk.Frame):
 
         self._bg = background
 
-        # Main scrolling canvas
+        # the main canvas that the content slides inside when scrolling horizontally
         self.canvas = tk.Canvas(
             self,
             borderwidth=0,
@@ -1514,7 +1453,7 @@ class HorizontalScrollableFrame(ttk.Frame):
             xscrollincrement=20,
         )
 
-        # Custom horizontal scrollbar
+        # our custom horizontal scrollbar that sits along the bottom
         self.scrollbar = HorizontalCanvasScrollbar(
             self,
             command=self._scroll_command,
@@ -1523,82 +1462,87 @@ class HorizontalScrollableFrame(ttk.Frame):
             thumb_color="#888"
         )
 
-        # Inner frame (actual content container)
+        # the actual content frame that lives inside the canvas and holds child widgets
         self.inner = tk.Frame(self.canvas, background=background)
 
+        # embed the inner frame into the canvas starting at the top left corner
         self.window_id = self.canvas.create_window(
             (0, 0),
             window=self.inner,
             anchor="nw"
         )
 
-        # Connect scrollbar <-> canvas
+        # link the canvas scroll position to the scrollbar so they stay in sync
         self.canvas.configure(xscrollcommand=self._on_scroll)
 
-        # Layout
+        # put the canvas on top and the scrollbar along the bottom
         self.canvas.pack(side="top", fill="both", expand=True)
         self.scrollbar.pack(side="bottom", fill="x")
 
-        # Resize + scroll region handling
+        # when the inner frame grows, update how far the canvas can scroll
         self.inner.bind("<Configure>", self._update_scroll_region)
+        # when the canvas is resized, adjust the height of the inner frame to match
         self.canvas.bind("<Configure>", self._resize_inner)
 
-        # Mouse tracking
+        # track which scrollable frame is currently under the mouse
         self.bind("<Enter>", self._activate)
         self.canvas.bind("<Enter>", self._activate)
         self.inner.bind("<Enter>", self._activate)
 
-        # Keyboard bindings for horizontal scrolling
+        # arrow key bindings so the user can scroll with the keyboard
         self.canvas.bind("<Left>", self._on_key_left)
         self.canvas.bind("<Right>", self._on_key_right)
 
         self.bind("<Destroy>", self._on_destroy)
 
     def _update_scroll_region(self, _event=None):
+        # recalculate the total scrollable area after the inner frame changes size
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _resize_inner(self, event):
+        # keep the inner frame's height the same as the canvas height so it fills vertically
         self.canvas.itemconfig(self.window_id, height=event.height)
 
     def _activate(self, _event):
+        # mark this frame as the active scrollable target and give it keyboard focus
         HorizontalScrollableFrame._active = self
         self.canvas.focus_set()
 
     def _on_destroy(self, event):
+        # when this widget is destroyed, clear the active reference so we do not keep a dead pointer
         if event.widget == self:
             if HorizontalScrollableFrame._active is self:
                 HorizontalScrollableFrame._active = None
 
     def _on_scroll(self, start, end):
-        """Update scrollbar when canvas scrolls."""
+        # called by the canvas whenever its scroll position changes; passes the position to the scrollbar
         self.scrollbar.set(start, end)
 
     def _scroll_command(self, *args):
-        """Handle scrollbar commands."""
+        # called by the scrollbar when the user drags; passes the command to the canvas
         self.canvas.xview(*args)
 
-    # ============ Keyboard Support ============
-
     def _on_key_left(self, _event):
+        # scroll left 3 units when the left arrow key is pressed
         self.canvas.xview_scroll(-3, "units")
 
     def _on_key_right(self, _event):
+        # scroll right 3 units when the right arrow key is pressed
         self.canvas.xview_scroll(3, "units")
 
 
 class ScrollableFrame(ttk.Frame):
-    """Custom scrollable frame with canvas-based scrollbar, animated scrolling,
-    and keyboard support with smooth acceleration."""
+    """a frame that can scroll vertically using a custom drawn scrollbar and keyboard shortcuts."""
 
-    _active = None
-    _wheel_bound = False
+    _active = None      # the scrollable frame that the mouse is currently hovering over
+    _wheel_bound = False  # whether we have already hooked up the global mousewheel event
 
     def __init__(self, parent: tk.Widget, background: str = APP_BG) -> None:
         super().__init__(parent)
 
         self._bg = background
 
-        # Main scrolling canvas
+        # the main canvas that the content slides inside when scrolling
         self.canvas = tk.Canvas(
             self,
             borderwidth=0,
@@ -1608,9 +1552,9 @@ class ScrollableFrame(ttk.Frame):
             highlightbackground=background,
             yscrollincrement=20,
         )
-        self.canvas.config(takefocus=True)  # Make canvas focusable
+        self.canvas.config(takefocus=True)  # allow the canvas to receive keyboard events
 
-        # Custom scrollbar
+        # our custom vertical scrollbar placed along the right side
         self.scrollbar = CanvasScrollbar(
             self,
             command=self._scroll_command,
@@ -1619,40 +1563,42 @@ class ScrollableFrame(ttk.Frame):
             thumb_color="#888"
         )
 
-        # Inner frame (actual content container)
+        # the actual content frame inside the canvas where child widgets are placed
         self.inner = tk.Frame(self.canvas, background=background)
 
+        # embed the inner frame into the canvas starting at the top left
         self.window_id = self.canvas.create_window(
             (0, 0),
             window=self.inner,
             anchor="nw"
         )
 
-        # Connect scrollbar <-> canvas
+        # link the canvas scroll position to the scrollbar so they stay in sync
         self.canvas.configure(yscrollcommand=self._on_scroll)
 
-        # Layout
+        # canvas fills the left side and the scrollbar goes along the right
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        # Resize + scroll region handling
+        # when the inner frame changes size, update the scroll region so scrolling still works
         self.inner.bind("<Configure>", self._update_scroll_region)
+        # when the canvas is resized, stretch the inner frame to match its width
         self.canvas.bind("<Configure>", self._resize_inner)
 
-        # Mouse tracking
+        # track which scrollable frame is under the mouse for mousewheel routing
         self.bind("<Enter>", self._activate)
         self.canvas.bind("<Enter>", self._activate)
         self.inner.bind("<Enter>", self._activate)
 
-        # Keyboard bindings on canvas
+        # keyboard scrolling bindings on the canvas
         self.canvas.bind("<KeyPress-Up>", self._on_key_up)
         self.canvas.bind("<KeyPress-Down>", self._on_key_down)
         self.canvas.bind("<KeyPress-Prior>", self._on_page_up)
         self.canvas.bind("<KeyPress-Next>", self._on_page_down)
         self.canvas.bind("<KeyPress-Home>", self._on_home)
         self.canvas.bind("<KeyPress-End>", self._on_end)
-        
-        # Also bind to frame level for better event capture
+
+        # also bind keyboard scrolling at the frame level for more reliable event capture
         self.bind("<KeyPress-Up>", self._on_key_up)
         self.bind("<KeyPress-Down>", self._on_key_down)
         self.bind("<KeyPress-Prior>", self._on_page_up)
@@ -1663,55 +1609,59 @@ class ScrollableFrame(ttk.Frame):
         self.bind("<Destroy>", self._on_destroy)
 
     def _update_scroll_region(self, _event=None):
+        # recalculate how far the canvas can scroll based on the total content size
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _resize_inner(self, event):
+        # stretch the inner frame to match the canvas width so content fills the full area
         self.canvas.itemconfig(self.window_id, width=event.width)
 
     def _activate(self, _event):
+        # remember this as the active scroll target and give the canvas keyboard focus
         ScrollableFrame._active = self
-        # Focus canvas to receive keyboard events
         self.canvas.focus_set()
 
     def _on_destroy(self, event):
+        # when this widget is destroyed, clear the active reference so we do not hold onto it
         if event.widget == self:
             if ScrollableFrame._active is self:
                 ScrollableFrame._active = None
 
     def _on_scroll(self, start, end):
-        """Update scrollbar when canvas scrolls."""
+        # called by the canvas when its scroll position changes; updates the scrollbar to match
         self.scrollbar.set(start, end)
 
     def _scroll_command(self, *args):
-        """Handle scrollbar commands."""
+        # called by the scrollbar when the user drags it; passes the scroll command to the canvas
         self.canvas.yview(*args)
 
-    # ============ Keyboard Support ============
-
     def _on_key_up(self, _event):
+        # scroll up 3 units when the up arrow key is pressed
         self.canvas.yview_scroll(-3, "units")
 
     def _on_key_down(self, _event):
+        # scroll down 3 units when the down arrow key is pressed
         self.canvas.yview_scroll(3, "units")
 
     def _on_page_up(self, _event):
+        # scroll up a full page (10 units) when the page up key is pressed
         self.canvas.yview_scroll(-10, "units")
 
     def _on_page_down(self, _event):
+        # scroll down a full page (10 units) when the page down key is pressed
         self.canvas.yview_scroll(10, "units")
 
     def _on_home(self, _event):
-        """Home key - scroll to top."""
+        """scroll all the way to the top when the home key is pressed."""
         self.canvas.yview_moveto(0)
 
     def _on_end(self, _event):
-        """End key - scroll to bottom."""
+        """scroll all the way to the bottom when the end key is pressed."""
         self.canvas.yview_moveto(1)
-
-    # ============ Mousewheel Support with Smooth Acceleration ============
 
     @classmethod
     def hook_mousewheel(cls, root: tk.Misc) -> None:
+        # hook up global mousewheel events once so any scrollable frame in the app can receive them
         if cls._wheel_bound:
             return
 
@@ -1723,7 +1673,7 @@ class ScrollableFrame(ttk.Frame):
 
     @classmethod
     def _scroll_target(cls, event):
-        """Find the scrollable frame under the cursor."""
+        """walk up the widget tree from the event's widget to find the nearest scrollable frame."""
         w = getattr(event, "widget", None)
 
         while w is not None:
@@ -1738,57 +1688,61 @@ class ScrollableFrame(ttk.Frame):
             except Exception:
                 break
 
+        # fall back to whichever frame was last active under the mouse
         return cls._active
 
     @classmethod
     def _on_mousewheel_all(cls, event):
-        """Handle Windows/macOS mousewheel scrolling."""
+        """handle mousewheel scrolling on windows and macos."""
         target = cls._scroll_target(event)
         if target:
             delta = getattr(event, "delta", 0)
             if delta == 0:
                 return
-            # delta=120 per mouse-wheel click; trackpad sends smaller values.
-            # Scale so one click scrolls 3 units (60px with yscrollincrement=20).
+            # a standard mouse click sends delta=120; a trackpad sends smaller values
+            # we scale it so one click scrolls about 3 units (which is 60px at yscrollincrement=20)
             units = max(1, abs(delta) // 40) * (-1 if delta > 0 else 1)
             target.canvas.yview_scroll(units, "units")
 
     @classmethod
     def _on_linux_up_all(cls, event):
+        # on linux the scroll wheel sends button 4 events for scrolling up
         target = cls._scroll_target(event)
         if target:
             target.canvas.yview_scroll(-3, "units")
 
     @classmethod
     def _on_linux_down_all(cls, event):
+        # on linux the scroll wheel sends button 5 events for scrolling down
         target = cls._scroll_target(event)
         if target:
             target.canvas.yview_scroll(3, "units")
 
 
-# --- Persistence & small UX helpers (settings, maps, clipboard, toasts) ----------
+# persistence helpers and small ux utilities for settings, maps, clipboard, and toast popups
 
 
 def resolve_brand_logo_path() -> Path | None:
-    """Find the first logo file that actually exists, or return None if no logo is available."""
+    """look through the candidate logo paths and return the first one that actually exists on disk, or none."""
     for candidate in BRAND_LOGO_CANDIDATES:
         if candidate.exists():
             return candidate
     return None
 
 def load_logo():
+    # if pillow is not installed we cannot load the logo image
     if Image is None or ImageTk is None:
-        # Pillow is not installed, so loading the logo is not available.
         return None
 
+    # find the first candidate logo file that exists on disk
     logo_path = next((p for p in BRAND_LOGO_CANDIDATES if p.exists()), None)
     if not logo_path:
-        print("⚠️ No logo found")
+        print("no logo found")
         return None
 
     img = Image.open(logo_path)
 
-    # Adjust this to the size you want the logo to appear
+    # resize the logo to the display size we want it to appear at
     DISPLAY_SIZE = (180, 180)
     img = img.resize(DISPLAY_SIZE, Image.LANCZOS)
 
@@ -1797,86 +1751,73 @@ def load_logo():
 
 
 def default_settings() -> dict[str, object]:
-    """
-    The baseline settings used the very first time the app runs (or if the
-    settings file gets deleted). All keys here MUST match what load_settings()
-    and the settings panel read/write.
-
-      font_scale:     0 = normal size. Positive = bigger text for accessibility.
-      reduce_motion:  if True, skip the animated button pulse effect.
-      autosave_draft: if True, save the form to disk every time the user changes a field.
-    """
+    """return the baseline settings used when the app runs for the first time or if the settings file was deleted.
+    font_scale: 0 means normal size; positive numbers make text bigger for accessibility.
+    reduce_motion: if true, skip the animated button pulse.
+    autosave_draft: if true, automatically save the form to disk whenever the user changes a field."""
     return {"font_scale": 0, "reduce_motion": False, "autosave_draft": True}
 
 
 def load_settings() -> dict[str, object]:
-    """
-    Read saved settings from disk. Strategy:
-      1. If the file doesn't exist → use defaults (first run).
-      2. If the file exists but is corrupt → use defaults (graceful recovery).
-      3. If the file exists and is valid → merge with defaults so any NEW keys
-         added in a future version automatically get their default values.
-    """
+    """read user settings from disk and return them as a dictionary.
+    if the file does not exist yet we return the defaults (first run).
+    if the file is broken or unreadable we return the defaults (safe recovery).
+    if the file is valid we merge it with defaults so new settings keys always have a value."""
     if not SETTINGS_FILE.exists():
-        return default_settings()   # first run — no file yet
+        return default_settings()   # first run, no settings file yet
     try:
-        # Read the raw text and parse it as a JSON dictionary.
+        # read the file and parse it as a json dictionary
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        # Start from defaults so new/missing keys are always populated.
+        # start from the defaults so any keys added in a newer version of the app still get values
         base = default_settings()
-        # Overwrite only the keys that exist in both the file AND the defaults dict.
-        # This prevents stale/unknown keys from sneaking in.
+        # only copy over keys that exist in both the file and the defaults to avoid stale or unknown keys
         base.update({k: data[k] for k in base if k in data})
         return base
     except (json.JSONDecodeError, OSError):
-        # File is corrupt, empty, or we don't have read permission — use defaults.
+        # the file is corrupt, empty, or we do not have permission to read it; use defaults
         return default_settings()
 
 
 def save_settings(data: dict[str, object]) -> None:
-    """Write the settings dictionary to disk as nicely-indented JSON.
-    Silently ignores disk errors (full disk, read-only file system, etc.)
-    because a failed settings save should never crash the app.
-    """
+    """write the settings dictionary to disk as nicely formatted json.
+    if the disk is full or the file is read only, we silently do nothing
+    so a settings save failure never crashes the app."""
     try:
         SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except OSError:
-        pass   # disk error — just skip silently
+        pass   # something went wrong writing to disk; ignore it silently
 
 
 def _loc_key(location: dict) -> str:
-    """Stable string key that uniquely identifies a location for favorites."""
+    """build a stable unique string key for a location so we can store it in the favorites set."""
     return f"{location['name']}|{location['address']}"
 
 
 def _maps_query(location: dict) -> str:
-    """Build the most precise Maps query string possible for a location dict.
-
-    Priority:
-    1. Lat/lng coordinates — completely unambiguous, works for any address.
-    2. Full address if the ZIP is already embedded in the address field.
-    3. Street + city + state + ZIP appended so Maps can disambiguate.
-    """
+    """build the best possible search string to pass to google maps for a given office location.
+    we try in this order: lat and lng coordinates (most precise), full address if it already has a zip, or address plus city state zip."""
+    # if we have exact coordinates, use them; they are completely unambiguous
     if location.get("lat") and location.get("lng"):
         return f"{location['lat']},{location['lng']}"
     addr = str(location.get("address", ""))
     zip_code = str(location.get("zip", ""))
     if zip_code and zip_code in addr:
-        return addr  # address field already includes ZIP — no disambiguation needed
+        return addr  # the zip code is already in the address field so it is specific enough
     city = str(location.get("city", ""))
     state = str(location.get("state", ""))
+    # join whichever of city, state, and zip are available into a string to append to the address
     extras = ", ".join(p for p in [city, state, zip_code] if p)
     return f"{addr}, {extras}" if extras else addr
 
 
 def open_location_in_maps(address: str) -> None:
-    """Open the user's default browser with a Google Maps search for the address."""
+    """open a google maps search for the given address in the user's default web browser."""
     webbrowser.open(f"https://www.google.com/maps/search/?api=1&query={quote_plus(address)}")
 
 
 def open_directions_in_maps(destination: str, origin: str = "") -> None:
-    """Open Google Maps in directions mode. Origin is the user's location (ZIP or city);
-    destination is the office. If origin is empty, Maps uses the device's current location."""
+    """open google maps in directions mode going from the user's location to the office.
+    if origin is empty, google maps will use the device's current location as the starting point."""
     url = f"https://www.google.com/maps/dir/?api=1&destination={quote_plus(destination)}"
     if origin:
         url += f"&origin={quote_plus(origin)}"
@@ -1884,10 +1825,10 @@ def open_directions_in_maps(destination: str, origin: str = "") -> None:
 
 
 def copy_to_clipboard(widget: tk.Misc, text: str) -> None:
-    """Put `text` on the system clipboard using Tk's clipboard API."""
-    widget.clipboard_clear()       # remove anything already there
-    widget.clipboard_append(text)  # put our new text on
-    widget.update_idletasks()      # force Tk to actually push it through
+    """copy the given text to the system clipboard using tkinter's built in clipboard api."""
+    widget.clipboard_clear()       # clear whatever was on the clipboard before
+    widget.clipboard_append(text)  # put our text on the clipboard
+    widget.update_idletasks()      # flush pending tkinter events to make sure the clipboard update goes through
 
 
 def export_session_json(
@@ -1899,22 +1840,21 @@ def export_session_json(
     locations: list[dict[str, object]],
     radius: str,
 ) -> None:
-    """Save a complete snapshot of the session to a JSON file. This makes it
-    easy to share results, archive them, or hand them off to another tool."""
-    # Create the exports folder if it doesn't already exist.
+    """save a complete snapshot of this session to a json file so results can be shared, archived, or handed off."""
+    # make sure the exports folder exists; create it if needed
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    # Build the dictionary that will become the JSON file.
+    # build the dictionary that will be written as json
     payload = {
-        # When the export happened, formatted like 2026-04-29T12:34:56.
+        # the timestamp when this export was created, formatted as an iso date and time string
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "session_id": session_id,
         "app_version": APP_VERSION,
         "selected_programs": selected_programs,
-        # JSON only handles basic types — anything else gets converted to string.
+        # json can only store basic types, so anything else gets converted to a string
         "user_data": {k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v)) for k, v in user_data.items()},
-        # Convert each ProgramResult dataclass into a plain dict for JSON.
+        # convert each programresult dataclass into a plain dictionary so json can hold it
         "eligibility": {k: {"status": v.status, "explanation": v.explanation, "passed": v.passed, "missed": v.missed} for k, v in eligibility.items()},
-        # Slim down each office to just the fields worth exporting.
+        # include only the most important office fields rather than the full location record
         "locations": [
             {
                 "name": item["location"]["name"],
@@ -1926,124 +1866,120 @@ def export_session_json(
         ],
         "radius_miles": radius,
     }
-    # Write the dictionary as pretty-printed JSON.
+    # write the dictionary to the file as nicely indented json text
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 class BenefitBridgeApp(tk.Tk):
-    """Main app window. This is the brain of the program.
-
-    Quick map of how it works:
-    - `_build_shell()` builds the parts that stay on screen always:
-       header at the top, progress rail on the left, nav buttons at the bottom.
-    - `show_step()` swaps in the body of step 1, 2, or 3.
-    - `go_next()` / `go_back()` move the user between steps.
-    - The actual eligibility math comes from `benefit_bridge_core.py`.
-    """
+    """the main application window; this class is the central brain of the entire program.
+    _build_shell() creates the parts that stay visible on every step: header, left rail, nav buttons.
+    show_step() swaps in the right content for step 0, 1, or 2.
+    go_next() and go_back() move the user forward and backward through the wizard.
+    the eligibility math functions live in benefit_bridge_core.py and are called from here."""
 
     def __init__(self) -> None:
-        # Initialize the underlying Tk window.
+        # start the underlying tkinter window
         super().__init__()
-        # Replace our placeholder font with whatever nice font is installed.
+        # now that tkinter is running, replace the placeholder font with a nicer installed one
         global FONT_FAMILY
         FONT_FAMILY = preferred_ui_font(self)
 
-        # Window appearance: title bar, starting size, minimum size, bg color.
+        # set the window title, starting size, minimum size, and background color
         self.title("Benefit Bridge")
-        self.geometry("1180x820")    # initial width x height
-        self.minsize(960, 700)       # don't let user shrink below this
+        self.geometry("1180x820")    # initial window size in pixels
+        self.minsize(960, 700)       # prevent the user from shrinking below this size
         self.configure(bg=APP_BG)
 
-        # Random short ID shown in the header so each run is identifiable.
+        # generate a random short id for this session so each run is identifiable in exports
         self.session_id = uuid.uuid4().hex[:10].upper()
-        # Load saved user preferences (or defaults if none).
+        # load previously saved settings, or use the defaults if none exist
         self._settings = load_settings()
-        # The income the user originally entered, used for "what-if" slider math.
+        # the monthly income the user originally typed in, saved so the what if slider can calculate percentages
         self._baseline_monthly: float = 0.0
-        # Track scheduled timers so we can cancel them later.
-        self._toast_after: str | None = None   # for the toast popup
-        self._draft_after: str | None = None   # for autosave timer
-        # Try to load the logo; may be None if no logo exists.
+        # references to scheduled timer callbacks so we can cancel them if needed
+        self._toast_after: str | None = None   # timer for hiding the floating toast notification
+        self._draft_after: str | None = None   # timer for debounced autosave
+        # attempt to load the logo image; will be none if no logo file is found
         self.brand_logo_image: tk.PhotoImage | None = self._load_brand_logo()
 
-        # Lists/dicts that hold the wizard's state as the user fills it in.
-        self.selected_programs: list[str] = []   # which checkboxes are ticked
-        self.user_data: dict[str, object] = {}   # the whole household profile
-        self.eligibility: dict[str, ProgramResult] = {}   # results by program
-        self.location_results: list[dict[str, object]] = []  # nearby offices
-        self._location_view: list[dict[str, object]] = []    # filtered/sorted view of above
-        # One BooleanVar per program checkbox so Tk can track its on/off state.
+        # these lists and dicts hold the wizard state as the user works through the steps
+        self.selected_programs: list[str] = []   # keys of the programs whose checkboxes are ticked
+        self.user_data: dict[str, object] = {}   # the complete household profile collected from step 1
+        self.eligibility: dict[str, ProgramResult] = {}   # eligibility results keyed by program name
+        self.location_results: list[dict[str, object]] = []  # nearby offices found after running the check
+        self._location_view: list[dict[str, object]] = []    # the filtered and sorted version shown in the ui
+        # one tkinter booelan variable per program so the checkboxes track their own on off state
         self.program_vars: dict[str, tk.BooleanVar] = {}
         for _key in PROGRAMS:
             self.program_vars[_key] = tk.BooleanVar(value=False)
 
-        # Tk "variables" — special objects that automatically sync with widgets.
-        # If you change the variable, the widget updates, and vice-versa.
-        self.income_var = tk.StringVar()                         # income amount typed in
-        self.income_period_var = tk.StringVar(value="Monthly")   # "Monthly" or "Yearly"
-        self.name_var = tk.StringVar()                           # applicant name
-        self.household_var = tk.IntVar(value=3)                  # household size
-        self.location_var = tk.StringVar()                       # ZIP or city
-        self.state_var = tk.StringVar(value="California")       # state dropdown
-        self.age_var = tk.StringVar(value="Adult")               # age range dropdown
-        self.employment_var = tk.StringVar(value=EMPLOYMENT_OPTIONS[0])  # employment dropdown
-        self.residency_var = tk.BooleanVar(value=True)
-        self.healthy_var = tk.BooleanVar(value=True)           # is a US resident?
-        self.child_under_13_var = tk.BooleanVar(value=True)      # has young child?
-        self.child_under_5_var = tk.BooleanVar(value=False)      # has child under 5 (WIC)?
-        self.pregnant_var = tk.BooleanVar(value=False)           # pregnant (WIC)?
-        self.postpartum_var = tk.BooleanVar(value=False)         # postpartum (WIC)?
-        self.breastfeeding_var = tk.BooleanVar(value=False)      # breastfeeding (WIC)?
-        self.utility_hardship_var = tk.BooleanVar(value=False)   # behind on utilities?
-        self.internet_need_var = tk.BooleanVar(value=True)       # needs internet?
-        self.transportation_need_var = tk.BooleanVar(value=False)  # needs transit?
-        self.radius_var = tk.StringVar(value="10")               # search radius miles
-        self._radius_dbl = tk.DoubleVar(value=10.0)              # numeric twin for the slider
+        # tkinter variables are special objects that automatically stay in sync with the widgets bound to them
+        # if you change the variable the widget updates, and if the user changes the widget the variable updates
+        self.income_var = tk.StringVar()                         # the income amount the user types in
+        self.income_period_var = tk.StringVar(value="Monthly")   # whether the income is monthly or yearly
+        self.name_var = tk.StringVar()                           # the applicant's name
+        self.household_var = tk.IntVar(value=3)                  # number of people in the household
+        self.location_var = tk.StringVar()                       # the zip code or city name entered
+        self.state_var = tk.StringVar(value="California")        # the selected state
+        self.age_var = tk.StringVar(value="Adult")               # the selected age range
+        self.employment_var = tk.StringVar(value=EMPLOYMENT_OPTIONS[0])  # the selected employment status
+        self.residency_var = tk.BooleanVar(value=True)           # whether the applicant is a us resident
+        self.healthy_var = tk.BooleanVar(value=True)             # whether they are looking for nutritious food
+        self.child_under_13_var = tk.BooleanVar(value=True)      # whether there is a child under 13 in the home
+        self.child_under_5_var = tk.BooleanVar(value=False)      # whether there is a child under 5 (for wic)
+        self.pregnant_var = tk.BooleanVar(value=False)           # whether the applicant is pregnant (for wic)
+        self.postpartum_var = tk.BooleanVar(value=False)         # whether the applicant is postpartum (for wic)
+        self.breastfeeding_var = tk.BooleanVar(value=False)      # whether the applicant is breastfeeding (for wic)
+        self.utility_hardship_var = tk.BooleanVar(value=False)   # whether they are behind on a utility bill
+        self.internet_need_var = tk.BooleanVar(value=True)       # whether they need home internet
+        self.transportation_need_var = tk.BooleanVar(value=False) # whether they need transportation help
+        self.radius_var = tk.StringVar(value="10")               # the office search radius in miles
+        self._radius_dbl = tk.DoubleVar(value=10.0)              # the numeric version of the radius for the slider
 
-        # Variables for the results page filters.
-        self.office_search_var = tk.StringVar()                  # office search text
-        self.office_sort_var = tk.StringVar(value="distance")    # sort by distance/name
-        self.income_scenario_pct = tk.DoubleVar(value=100.0)     # "what-if" income slider
+        # variables used by the filters and controls on the results page
+        self.office_search_var = tk.StringVar()                  # text the user types to search offices
+        self.office_sort_var = tk.StringVar(value="distance")    # whether to sort offices by distance or name
+        self.income_scenario_pct = tk.DoubleVar(value=100.0)     # the what if income slider value (100 = their actual income)
         self.prog_filter_vars: dict[str, tk.BooleanVar] = {k: tk.BooleanVar(value=True) for k in PROGRAMS}
         self.show_favorites_var = tk.BooleanVar(value=False)
-        self._lang: str = "en"
+        self._lang: str = "en"                                   # current ui language: "en" for english or "es" for spanish
         self.favorite_keys: set[str] = self._load_favorites()
 
-        # Which step (0, 1, or 2) of the wizard we're on.
+        # which step of the wizard is currently showing: 0, 1, or 2
         self.current_step = 0
-        # The labels in the left progress rail; we update their colors as steps change.
+        # references to the step labels in the left rail so we can update their colors as steps change
         self.step_labels: list[tk.Label] = []
 
-        # Set up styles, build the persistent UI, hook up shortcuts.
+        # configure widget styles, build the persistent chrome, then hook up keyboard shortcuts
         self._configure_styles()
         self._build_shell()
         ScrollableFrame.hook_mousewheel(self)
         self._bind_shortcuts()
-        # Always start on step 0. Drafts are loaded only when the user clicks "Load draft".
+        # always start on step 0 (program picker); drafts are only loaded when the user explicitly clicks "load draft"
         self.show_step(0)
-        # Start the footer clock ticking.
+        # start the live clock in the footer
         self._tick_clock()
 
     def _configure_styles(self) -> None:
-        """Set the colors and fonts on Tk's built-in (themed) widgets so they
-        match the dark theme. Without this, ttk widgets use the OS default look."""
-        # ttk.Style is the object you use to change ttk widget appearance.
+        """apply dark theme colors and fonts to tkinter's built in ttk widgets.
+        without this the ttk widgets would just show the operating system's default look."""
+        # ttk.Style is the object you use to change how ttk widgets look
         self.style = ttk.Style(self)
         try:
-            # "clam" is one of Tk's built-in themes — easier to customize.
+            # the "clam" theme is one of tkinter's built in themes and is easier to customize than others
             self.style.theme_use("clam")
         except tk.TclError:
             pass
-        fs = self._font_size(11)  # base font size, possibly bumped up for accessibility
-        # Configure each widget class with our colors and fonts.
+        fs = self._font_size(11)  # the base font size, adjusted for any accessibility scale setting
+        # apply colors and fonts to each ttk widget type
         self.style.configure("TFrame", background=APP_BG)
         self.style.configure("TLabel", background=APP_BG, foreground=TEXT, font=(FONT_FAMILY, fs))
         self.style.configure("Title.TLabel", font=(FONT_FAMILY, self._font_size(26), "bold"), foreground=TEXT)
         self.style.configure("Subtitle.TLabel", font=(FONT_FAMILY, self._font_size(12)), foreground=MUTED)
         self.style.configure("TCheckbutton", background=CARD_BG, foreground=TEXT, font=(FONT_FAMILY, fs))
-        # When a checkbox is hovered, give it a subtle bg change.
+        # give checkboxes a subtle background change when the mouse hovers over them
         self.style.map("TCheckbutton", background=[("active", CARD_BG_HOVER)])
-        # Dropdown menu (Combobox) styling.
+        # style the dropdown combobox to match the dark theme
         self.style.configure(
             "TCombobox",
             padding=(10, 8),
@@ -2055,11 +1991,11 @@ class BenefitBridgeApp(tk.Tk):
             darkcolor=BORDER,
             arrowcolor=MUTED,
         )
-        # Keep the same field bg whether or not the dropdown is editable.
+        # keep the same field background color whether or not the dropdown is in readonly mode
         self.style.map("TCombobox", fieldbackground=[("readonly", INPUT_BG)])
-        # Slider style.
+        # style the horizontal slider track
         self.style.configure("Horizontal.TScale", background=CARD_BG, troughcolor=INPUT_BG)
-        # Scrollbar style.
+        # style the built in scrollbar (used as a fallback in some places)
         self.style.configure(
             "TScrollbar",
             background=INPUT_BG,
@@ -2071,38 +2007,38 @@ class BenefitBridgeApp(tk.Tk):
             width=14,
         )
         self.style.map("TScrollbar", background=[("active", CARD_BG_HOVER), ("pressed", BORDER)])
-        # Make the combobox dropdown list use our font.
+        # make the dropdown list inside comboboxes use our preferred font
         self.option_add("*TCombobox*Listbox.font", (FONT_FAMILY, fs))
-        # Match dialog box background to our app background.
+        # match the background of any dialog popups to our app background
         self.option_add("*Dialog.background", APP_BG)
 
     def _font_size(self, base: int) -> int:
-        """Adjust a base font size by the user's accessibility setting.
-        Settings can shift sizes up or down; we clamp so it never gets crazy."""
+        """calculate the actual font size to use by adding the user's accessibility offset to the base size.
+        we clamp the result between 9 and 22 so it never becomes unreadably small or absurdly huge."""
         return int(clamp(base + int(self._settings.get("font_scale", 0)), 9, 22))
 
     def _t(self, text: str) -> str:
-        """Return the Spanish translation of `text` if the UI is in Spanish, otherwise English."""
+        """look up the spanish translation for text if the ui is in spanish mode; otherwise return the english text unchanged."""
         if self._lang == "es":
             return SPANISH.get(text, text)
         return text
 
     def _button(self, parent: tk.Widget, text: str, command, variant: str = "secondary") -> ModernButton:
-        # Quick helper: make a ModernButton that matches its parent's background.
+        # convenience wrapper: create a modernbutton that automatically inherits the parent's background color
         return ModernButton(parent, text, command, variant, widget_background(parent))
 
     def _load_brand_logo(self) -> tk.PhotoImage | None:
-        """Load the logo image and shrink it if it's too big. Returns None if no logo."""
+        """load the logo image file and shrink it to fit in the header; returns none if no logo file is found."""
         logo_path = resolve_brand_logo_path()
         if not logo_path:
             return None
-        max_h = 70  # logical display height in points
-        # Prefer PIL: smooth resize with no subsample GC hazard.
+        max_h = 70  # the logo should appear at most 70 points tall in the header
+        # if pillow is installed use it for a high quality smooth resize
         if Image is not None and ImageTk is not None:
             try:
                 pil_img = Image.open(str(logo_path))
-                # Render at physical pixels so Retina/HiDPI displays stay crisp.
-                # winfo_fpixels('1i') ≈ 144 on 2x Retina vs 72 on standard.
+                # calculate the device pixel ratio so the logo looks sharp on high dpi retina displays
+                # winfo_fpixels("1i") returns about 144 on a 2x retina screen and 72 on a standard screen
                 try:
                     dpr = max(1.0, self.winfo_fpixels('1i') / 72.0)
                 except Exception:
@@ -2113,66 +2049,63 @@ class BenefitBridgeApp(tk.Tk):
                 return ImageTk.PhotoImage(pil_img)
             except Exception:
                 return None
-        # Fallback: pure Tkinter (PIL not installed).
+        # fallback path used when pillow is not installed: use tkinter's built in image loading
         try:
             image = tk.PhotoImage(file=str(logo_path))
         except tk.TclError:
             return None
         if image.height() > max_h:
             ratio = max(1, math.ceil(image.height() / max_h))
-            # Keep original alive — subsample result can be invalidated when
-            # the source image is garbage-collected on some Tk builds.
+            # keep a reference to the original image so the subsampled version is not garbage collected
             self._brand_logo_original = image
             image = image.subsample(ratio, ratio)
         return image
 
     def _surface(self, parent: tk.Widget) -> tk.Widget:
-        """If parent is a RoundedCard, return its inner body so children sit
-        on the visible card area. Otherwise just return parent unchanged."""
+        """if the parent is a roundedcard, return its inner body frame where children should be placed.
+        otherwise just return the parent widget itself unchanged."""
         return parent.body if isinstance(parent, RoundedCard) else parent
 
     def _card(self, parent: tk.Widget) -> RoundedCard:
-        # Shortcut for making a new rounded card that matches its parent's bg.
+        # convenience wrapper: create a new roundedcard that inherits the parent's background color
         return RoundedCard(parent, widget_background(parent))
 
     def _clear(self, parent: tk.Widget) -> None:
-        # Remove every widget that's a direct child of `parent`.
+        # destroy all child widgets inside the given parent widget so the space is empty
         for child in parent.winfo_children():
             child.destroy()
 
     def _focus_ring(self, widget: tk.Widget) -> None:
-        """Make a widget's border light up in accent color when focused."""
-        # FocusIn = user tabbed into or clicked the widget.
+        """make the border of a widget glow in the accent color when it has keyboard focus."""
+        # focusin fires when the user tabs into or clicks the widget
         widget.bind("<FocusIn>", lambda _event: widget.configure(highlightbackground=BORDER_FOCUS))
-        # FocusOut = focus moved elsewhere.
+        # focusout fires when focus moves to a different widget
         widget.bind("<FocusOut>", lambda _event: widget.configure(highlightbackground=BORDER))
 
     def _build_shell(self) -> None:
-        """Build all the chrome that stays on screen across all three steps:
-        the top header, the left progress rail, the bottom nav, the footer."""
+        """build all the persistent chrome that stays visible across all three steps:
+        the header bar at the top, the progress rail on the left, the nav buttons at the bottom, and the footer."""
 
-        # === HEADER (top bar) ===========================================
-        # A fixed-height bar across the top of the window.
+        # header bar across the top of the window with a fixed height
         header = tk.Frame(self, bg=HEADER_BG, height=104, highlightbackground=BORDER, highlightthickness=1)
         header.pack(fill="x")
-        # pack_propagate(False) means the frame keeps its set height even if
-        # nothing inside requests that much space.
+        # pack_propagate(false) makes the frame keep its exact set height even if its children are smaller
         header.pack_propagate(False)
 
-        # Left side of the header: logo + title + slogan.
+        # the left side of the header holds the logo, the app name, and the tagline
         left_brand = tk.Frame(header, bg=HEADER_BG)
         left_brand.pack(side="left", anchor="w", padx=28, pady=(14, 0))
 
-        # Show the logo image if we successfully loaded one.
+        # only show the logo label if we successfully loaded a logo image
         if self.brand_logo_image is not None:
             logo_label = tk.Label(left_brand, image=self.brand_logo_image, bg=HEADER_BG)
             logo_label.pack(side="left", padx=(0, 14))
 
-        # Stack the title and slogan vertically.
+        # a small vertical group for stacking the app name above the tagline
         title_group = tk.Frame(left_brand, bg=HEADER_BG)
         title_group.pack(side="left", anchor="w")
 
-        # Big app name.
+        # the large app name label
         tk.Label(
             title_group,
             text="Benefit Bridge",
@@ -2180,7 +2113,7 @@ class BenefitBridgeApp(tk.Tk):
             fg=TEXT,
             font=(FONT_FAMILY, self._font_size(26), "bold"),
         ).pack(anchor="w")
-        # Tagline below.
+        # the tagline shown below the app name
         tk.Label(
             title_group,
             text=BRAND_SLOGAN,
@@ -2189,15 +2122,14 @@ class BenefitBridgeApp(tk.Tk):
             font=(FONT_FAMILY, self._font_size(13), "bold"),
         ).pack(anchor="w", pady=(4, 0))
 
-        # Right side of header: pills + tool buttons.
+        # the right side of the header holds the session id pill and the utility buttons
         right_header = tk.Frame(header, bg=HEADER_BG)
         right_header.pack(side="right", padx=20, pady=(18, 0))
 
-        # Two info pills, packed right-to-left.
+        # a pill badge showing the session id so each run is identifiable
         PillLabel(right_header, f"Session {self.session_id}", "#0c1a2e", ACCENT, HEADER_BG).pack(side="right")
 
-
-        # Row of utility buttons (Export, Settings, etc.).
+        # a row of small utility buttons along the top right
         tools = tk.Frame(right_header, bg=HEADER_BG)
         tools.pack(side="right", padx=(0, 8))
         self._button(tools, "Export JSON", self.action_export_json, "secondary").pack(side="left", padx=3)
@@ -2207,27 +2139,26 @@ class BenefitBridgeApp(tk.Tk):
         self._lang_btn = self._button(tools, "ES", self._toggle_lang, "accent")
         self._lang_btn.pack(side="left", padx=3)
 
-        # === BODY (everything below the header) =========================
+        # the body frame fills everything below the header
         body = tk.Frame(self, bg=APP_BG)
         body.pack(fill="both", expand=True)
 
-        # === LEFT PROGRESS RAIL =========================================
-        # Fixed-width sidebar that shows step 1/2/3.
+        # the left progress rail is a fixed width sidebar showing which step the user is on
         self.rail = tk.Frame(body, bg=RAIL_BG, width=260, highlightbackground=BORDER, highlightthickness=1)
         self.rail.pack(side="left", fill="y")
         self.rail.pack_propagate(False)
 
-        # The three steps shown in the rail.
+        # these are the three step names shown inside the rail
         steps = [("1", "Choose subsidies"), ("2", "Household profile"), ("3", "Results & offices")]
-        # Section heading for the rail.
+        # the "progress" heading at the top of the rail
         tk.Label(self.rail, text="Progress", bg=RAIL_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11), "bold")).pack(anchor="w", padx=22, pady=(26, 8))
-        # One label per step, saved in self.step_labels so we can recolor them later.
+        # create one label per step and save them in step_labels so we can change their color later
         for number, label in steps:
             item = tk.Label(self.rail, text=f"{number}. {label}", bg=RAIL_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(12)), padx=12, pady=11, anchor="w")
             item.pack(fill="x", padx=14, pady=3)
             self.step_labels.append(item)
 
-        # A small disclaimer pinned to the bottom of the rail.
+        # a small disclaimer text pinned to the very bottom of the rail
         self._rail_hint = tk.Label(
             self.rail,
             text=f"{BRAND_SLOGAN}. Sample rules only — always confirm with the office before applying.",
@@ -2238,23 +2169,22 @@ class BenefitBridgeApp(tk.Tk):
             font=(FONT_FAMILY, self._font_size(10)),
         )
         self._rail_hint.pack(side="bottom", anchor="w", padx=20, pady=22)
-        # When the rail is resized, recompute the wrap width of the disclaimer.
+        # whenever the rail is resized we recalculate the disclaimer wrap width so it never overflows
         self.rail.bind("<Configure>", self._rail_resize_hint)
 
-        # === MAIN CONTENT AREA (right side of body) =====================
+        # the main content area fills everything to the right of the rail
         main = tk.Frame(body, bg=APP_BG)
         main.pack(side="left", fill="both", expand=True)
 
-        # Important: pack the nav buttons FIRST and to the bottom. Otherwise,
-        # if the step's content is very tall, it could push the buttons
-        # off-screen and the user couldn't continue.
+        # we pack the nav buttons first and push them to the bottom
+        # this ensures they are never pushed off screen even when the step content is very tall
         self.nav = tk.Frame(main, bg=APP_BG)
         self.nav.pack(side="bottom", fill="x", padx=26, pady=(0, 10))
-        # Then pack the content area which fills the remaining space.
+        # the content area fills the remaining space above the nav buttons
         self.content = tk.Frame(main, bg=APP_BG)
         self.content.pack(fill="both", expand=True, padx=26, pady=(20, 12))
 
-        # === NAV BUTTONS (Back / Start over / Drafts / Next) ============
+        # navigation buttons: back on the left, next on the right, start over and drafts in the middle
         self.back_button = self._button(self.nav, "Back", self.go_back, "secondary")
         self.back_button.pack(side="left")
         self._nav_startover_btn = self._button(self.nav, "Start over", self.start_over, "ghost")
@@ -2266,11 +2196,11 @@ class BenefitBridgeApp(tk.Tk):
         self.next_button = self._button(self.nav, "Next", self.go_next, "primary")
         self.next_button.pack(side="right")
 
-        # === FOOTER (status bar at bottom) ==============================
+        # the footer is a thin status bar along the very bottom of the window
         footer = tk.Frame(self, bg=APP_BG_ELEVATED, height=32, highlightbackground=BORDER, highlightthickness=1)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
-        # Left side: status messages (updated as actions happen).
+        # the left side of the footer shows status messages that update as actions happen
         self.footer_left = tk.Label(
             footer,
             text="Ready",
@@ -2280,7 +2210,7 @@ class BenefitBridgeApp(tk.Tk):
             anchor="w",
         )
         self.footer_left.pack(side="left", padx=16, pady=6, fill="x", expand=True)
-        # Right side: clock + version (updated by _tick_clock).
+        # the right side of the footer shows the current time and version number
         self.footer_right = tk.Label(
             footer,
             text=f"v{APP_VERSION}",
@@ -2292,86 +2222,83 @@ class BenefitBridgeApp(tk.Tk):
         self.footer_right.pack(side="right", padx=16, pady=6)
 
     def _rail_resize_hint(self, event: tk.Event) -> None:
-        # When the left rail's width changes, recompute the wrap width
-        # for the disclaimer text so it doesn't overflow.
+        # whenever the rail width changes, update the disclaimer wrap width so the text never overflows
         if event.widget == self.rail:
             self._rail_hint.configure(wraplength=max(140, int(event.width) - 36))
 
     def _status(self, message: str) -> None:
-        # Update the message shown on the left side of the footer.
+        # update the message text shown on the left side of the footer bar
         self.footer_left.configure(text=message)
 
     def _tick_clock(self) -> None:
-        # Update the footer's right-side label with the current time and version.
-        # lstrip("0") removes a leading zero from "01:23 PM" -> "1:23 PM".
+        # update the footer right label with the current time and version number
+        # lstrip("0") removes a leading zero so "01:23 pm" becomes "1:23 pm"
         self.footer_right.configure(text=f"{datetime.now().strftime('%I:%M %p').lstrip('0')} · v{APP_VERSION}")
-        # Schedule this method to run again in 30 seconds (30_000 ms).
+        # schedule this same method to run again in 30 seconds
         self.after(30_000, self._tick_clock)
 
     def _toast(self, message: str, ms: int = 2800) -> None:
-        """Show a temporary message box (a 'toast') that fades after `ms` milliseconds.
-        We use this instead of messagebox.showinfo because messagebox blocks the user."""
-        # If a previous toast is still scheduled to disappear, cancel it.
+        """show a temporary floating notification (a toast) that disappears after the given number of milliseconds.
+        we use this instead of a blocking messagebox so the user can keep working."""
+        # if a previous toast is still scheduled to close, cancel it before creating a new one
         if self._toast_after:
             try:
                 self.after_cancel(self._toast_after)
             except tk.TclError:
                 pass
-        # Create a new top-level window for the toast.
+        # create a new separate window for the toast notification
         top = tk.Toplevel(self)
-        # Hide the OS title bar/borders so it looks like a floating notification.
+        # hide the os title bar and borders so it looks like a floating popup rather than a window
         top.overrideredirect(True)
-        # Keep the toast on top of all other windows.
+        # keep the toast on top of all other windows so it is always visible
         top.attributes("-topmost", True)
         top.configure(bg=CARD_BG)
-        # Outer frame with an accent-colored border.
+        # outer frame with an accent colored highlight border
         frm = tk.Frame(top, bg=CARD_BG, highlightbackground=ACCENT, highlightthickness=1, padx=18, pady=12)
         frm.pack()
-        # The actual message text.
+        # the actual notification message text
         tk.Label(frm, text=message, bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(11))).pack()
-        # Position the toast near the top-center of the main window.
+        # position the toast near the top center of the main window
         x = self.winfo_rootx() + self.winfo_width() // 2 - 160
         y = self.winfo_rooty() + 72
         top.geometry(f"320x64+{max(0, x)}+{max(0, y)}")
-        # Auto-destroy the toast after `ms` milliseconds.
+        # schedule the toast window to destroy itself after the specified number of milliseconds
         self._toast_after = self.after(ms, top.destroy)
 
     def _bind_shortcuts(self) -> None:
-        """Set up keyboard shortcuts for the whole app."""
-        # Binding on `self` (the root) — fires no matter which widget has focus.
-        self.bind("<Control-e>", lambda _e: self.action_export_json())                       # Ctrl+E exports
-        self.bind("<Control-s>", lambda _e: self.action_save_draft_now())                    # Ctrl+S saves draft
-        self.bind("<Control-q>", lambda _e: (self._write_draft(), self.destroy()))           # Ctrl+Q quits (saving first)
-        self.bind("<F1>", lambda _e: self.action_shortcuts_dialog())                         # F1 shows shortcuts
+        """register keyboard shortcuts that work no matter which widget currently has focus."""
+        # binding on self (the root window) means these fire from anywhere in the app
+        self.bind("<Control-e>", lambda _e: self.action_export_json())          # ctrl+e exports results as json
+        self.bind("<Control-s>", lambda _e: self.action_save_draft_now())       # ctrl+s saves the current draft
+        self.bind("<Control-q>", lambda _e: (self._write_draft(), self.destroy())) # ctrl+q saves draft then quits
+        self.bind("<F1>", lambda _e: self.action_shortcuts_dialog())             # f1 shows the shortcuts list
 
     def _schedule_draft_autosave(self) -> None:
-        """Schedule an autosave for ~1.8 seconds from now. If called again
-        before that fires, the old timer is cancelled — this is called
-        'debouncing'. Result: while the user is typing, we don't save
-        constantly; we save once they stop."""
-        # Skip if the user disabled autosave in Settings.
+        """schedule an autosave to happen about 1.8 seconds from now.
+        if this is called again before the timer fires, the old timer is cancelled and a new one starts.
+        this is called debouncing: while the user is typing we do not save constantly; we save once they pause."""
+        # do nothing if autosave was turned off in settings
         if not self._settings.get("autosave_draft", True):
             return
-        # Cancel any pending autosave that hasn't fired yet.
+        # cancel any autosave that is already pending
         if self._draft_after:
             try:
                 self.after_cancel(self._draft_after)
             except tk.TclError:
                 pass
-        # Schedule _write_draft to run in 1800 ms (1.8 seconds).
+        # schedule the actual save to happen 1800 milliseconds (1.8 seconds) from now
         self._draft_after = self.after(1800, self._write_draft)
 
     def _write_draft(self) -> None:
-        """Save the current wizard state to disk so it can be reloaded later."""
-        # Clear our timer reference now that we're firing.
+        """save a snapshot of the current wizard state to the draft json file on disk."""
+        # clear the timer reference now that the save is actually running
         self._draft_after = None
         try:
-            # Build the snapshot. Use simple JSON-friendly types so anyone
-            # can open this file in a text editor.
+            # build the snapshot dictionary using only simple json compatible types
             payload = {
                 "saved_at": datetime.now().isoformat(timespec="seconds"),
                 "step": self.current_step,
-                # Pull the value out of each Tk variable.
+                # read the current value out of each tkinter variable
                 "programs": {k: v.get() for k, v in self.program_vars.items()},
                 "name": self.name_var.get(),
                 "income": self.income_var.get(),
@@ -2389,18 +2316,18 @@ class BenefitBridgeApp(tk.Tk):
                 "internet_need": self.internet_need_var.get(),
                 "transportation_need": self.transportation_need_var.get(),
             }
-            # Write the JSON file.
+            # write the snapshot to the draft file as formatted json
             DRAFT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             self._status("Draft saved locally")
         except OSError:
-            # Disk problem (full, permission denied, etc.) — show a message.
+            # the disk is full, the file is read only, or we do not have permission; show a message
             self._status("Could not save draft (disk error)")
 
     def _load_draft_if_present(self) -> bool:
-        """Read the saved draft from disk and refill the form with it.
+        """read the saved draft from disk and refill the form with it.
 
-        Returns True if it loaded something, False if there's no draft
-        or it was unreadable. We split the popup from the load logic so
+        returns true if it loaded something, false if there is no draft
+        or it was unreadable. the popup is split from the load logic so
         the caller can decide whether to show feedback.
         """
         if not DRAFT_FILE.exists():
@@ -2408,14 +2335,14 @@ class BenefitBridgeApp(tk.Tk):
         try:
             data = json.loads(DRAFT_FILE.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            # Draft file exists but is broken — give up.
+            # draft file exists but is broken so give up
             return False
-        # Refill each program checkbox from the saved values.
+        # refill each program checkbox from the saved values
         for k, v in data.get("programs", {}).items():
             if k in self.program_vars:
                 self.program_vars[k].set(bool(v))
-        # Refill all the form fields. .get(key, default) means: use
-        # default if the key isn't in the saved data.
+        # refill all the form fields. .get(key, default) means: use
+        # the default if the key is not in the saved data
         self.name_var.set(str(data.get("name", "")))
         self.income_var.set(str(data.get("income", "")))
         self.income_period_var.set(str(data.get("income_period", "Monthly")))
@@ -2431,37 +2358,37 @@ class BenefitBridgeApp(tk.Tk):
         self.utility_hardship_var.set(bool(data.get("utility_hardship", False)))
         self.internet_need_var.set(bool(data.get("internet_need", True)))
         self.transportation_need_var.set(bool(data.get("transportation_need", False)))
-        # Update the in-memory list of selected programs based on what's checked.
+        # update the runtime list of selected programs based on what is checked
         self.selected_programs = [k for k, v in self.program_vars.items() if v.get()]
-        # Figure out which step to jump to (clamped to a valid value 0-2).
+        # figure out which step to jump to (clamped to a valid value 0 to 2)
         step = int(data.get("step", 0))
         step = clamp(step, 0, 2)
-        # If the saved step was step 3 (results), we need to recompute the results.
+        # if the saved step was the results step, we need to recompute the results
         if step == 2:
             if not self.selected_programs:
-                # No programs picked — drop back to step 0.
+                # no programs picked so drop back to step 0
                 step = 0
             elif self.collect_user_data():
-                # Profile is valid — recompute eligibility and locations.
+                # profile is valid so recompute eligibility and locations
                 self._baseline_monthly = float(self.user_data["monthly_income"])
                 self.income_scenario_pct.set(100.0)
                 self.eligibility = compute_eligibility(self.selected_programs, self.user_data)
                 self.refresh_location_data()
             else:
-                # Profile was incomplete — drop back to step 1.
+                # profile was incomplete so drop back to step 1
                 step = 1
         self._status("Draft restored")
         self.show_step(step)
         return True
 
     def action_save_draft_now(self) -> None:
-        # Triggered by Ctrl+S or the "Save draft" button.
+        # triggered by ctrl+s or the save draft button
         self._write_draft()
         self._toast("Draft saved to disk")
 
     def action_load_draft_now(self) -> None:
-        """Handler for the 'Load draft' button."""
-        # Give clear feedback in every case so the button never feels broken.
+        """handler for the load draft button."""
+        # give clear feedback in every case so the button never feels broken
         if not DRAFT_FILE.exists():
             self._toast("No draft found yet")
             return
@@ -2471,20 +2398,20 @@ class BenefitBridgeApp(tk.Tk):
             self._toast("Draft could not be loaded")
 
     def action_export_json(self) -> None:
-        # Triggered by Ctrl+E or the Export JSON button.
-        # Need eligibility results before we can export anything meaningful.
+        # triggered by ctrl+e or the export json button in the header
+        # we need eligibility results before we can export anything meaningful
         if not self.eligibility:
             messagebox.showinfo("Export JSON", "Run eligibility first (complete step 3).")
             return
-        # Build the export filename using the session ID.
+        # build the export file name using the session id so each export is unique
         path = EXPORT_DIR / f"benefit_bridge_export_{self.session_id}.json"
-        # Hand off to the standalone export function.
+        # pass everything to the standalone export function which handles writing the file
         export_session_json(path, self.session_id, self.selected_programs, self.user_data, self.eligibility, self.location_results, self.radius_var.get())
         self._status(f"Exported JSON → {path.name}")
         self._toast("Session exported as JSON")
 
     def action_about(self) -> None:
-        # Show a simple info popup with the version + tagline + session ID.
+        # show a simple info popup with the app version, tagline, and current session id
         messagebox.showinfo(
             "About Benefit Bridge",
             f"Benefit Bridge {APP_VERSION}\n\n"
@@ -2495,7 +2422,7 @@ class BenefitBridgeApp(tk.Tk):
         )
 
     def action_shortcuts_dialog(self) -> None:
-        # Show the list of keyboard shortcuts.
+        # show a popup listing all the available keyboard shortcuts
         messagebox.showinfo(
             "Keyboard shortcuts",
             "Ctrl+E — Export last results as JSON\n"
@@ -2505,91 +2432,89 @@ class BenefitBridgeApp(tk.Tk):
         )
 
     def action_settings(self) -> None:
-        """Open the Settings popup window where the user can change font size,
-        reduce motion, and toggle autosave."""
-        # Toplevel = a new window separate from the main one.
+        """open the settings popup window where the user can adjust font size, reduce motion, and toggle autosave."""
+        # toplevel creates a new window that is separate from but owned by the main window
         win = tk.Toplevel(self)
         win.title("Settings")
         win.configure(bg=CARD_BG)
         win.geometry("420x260")
-        # Inner frame with padding.
+        # inner frame with padding so the content does not press against the window edges
         body = tk.Frame(win, bg=CARD_BG, padx=22, pady=18)
         body.pack(fill="both", expand=True)
 
-        # Heading.
+        # section heading
         tk.Label(body, text="Accessibility & data", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, 14, "bold")).pack(anchor="w")
 
-        # === Text size row ===
+        # row for the text size offset spinbox
         scale_row = tk.Frame(body, bg=CARD_BG)
         scale_row.pack(fill="x", pady=(14, 6))
         tk.Label(scale_row, text="Text size offset", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, 11)).pack(side="left")
-        # Tk variable holding the current text-size offset value.
+        # a tkinter variable that holds the current font scale offset value
         var = tk.IntVar(value=int(self._settings.get("font_scale", 0)))
-        # Spinbox = number input with up/down arrows. Range -2 to +4.
+        # a spinbox is a number input with up and down arrow buttons; the allowed range is 2 below zero to 4 above zero
         tk.Spinbox(scale_row, from_=-2, to=4, textvariable=var, width=6, bg=INPUT_BG, fg=TEXT, buttonbackground=BORDER).pack(side="right")
 
-        # === Reduce motion checkbox ===
+        # checkbox for turning off button pulse animations
         motion = tk.BooleanVar(value=bool(self._settings.get("reduce_motion", False)))
         tk.Checkbutton(body, text="Reduce motion (disable button pulse)", variable=motion, bg=CARD_BG, fg=TEXT, selectcolor=INPUT_BG, activebackground=CARD_BG, activeforeground=TEXT).pack(anchor="w", pady=8)
 
-        # === Autosave checkbox ===
+        # checkbox for toggling autosave while the user is filling out the form
         autosave = tk.BooleanVar(value=bool(self._settings.get("autosave_draft", True)))
         tk.Checkbutton(body, text="Autosave draft while you work", variable=autosave, bg=CARD_BG, fg=TEXT, selectcolor=INPUT_BG, activebackground=CARD_BG, activeforeground=TEXT).pack(anchor="w")
 
-        # Inner function that runs when "Save" is clicked.
+        # inner function that runs when the save button is clicked inside this settings window
         def save_and_close() -> None:
-            # Pull the current values out of the variables and put them in our settings dict.
+            # read the current values from each variable and store them in the settings dict
             self._settings["font_scale"] = int(var.get())
             self._settings["reduce_motion"] = bool(motion.get())
             self._settings["autosave_draft"] = bool(autosave.get())
-            # Persist to disk.
+            # write the updated settings to disk
             save_settings(self._settings)
-            # Re-apply styles so font size changes show up immediately.
+            # reapply styles immediately so any font size change takes effect right now
             self._configure_styles()
             self._status("Settings saved")
-            # Close the settings window.
+            # close the settings window
             win.destroy()
 
-        # The Save button at the bottom-right.
+        # the primary save button at the bottom right of the settings window
         self._button(body, "Save", save_and_close, "primary").pack(anchor="e", pady=(18, 0))
 
     def _text_wrap(self) -> int:
-        """How wide a paragraph of text should wrap, based on the current
-        window size. We recompute this each time so it adapts when the
-        window is resized."""
-        # Force pending layout updates so winfo_width() returns the real size.
+        """calculate how wide in pixels a paragraph of text should wrap based on the current window size.
+        we recalculate this each call so it adapts automatically when the window is resized."""
+        # flush any pending layout work so winfo_width returns the current real size
         self.update_idletasks()
         try:
-            # Use the step host frame's width if it exists, otherwise the content area.
+            # use the step host frame width if available; fall back to the content area width
             ref = getattr(self, "_step_host", self.content)
-            # Clamp between 280 and 860 so it doesn't get absurdly narrow or wide.
+            # clamp to a reasonable range so text is never absurdly narrow or wide
             return max(280, min(860, int(ref.winfo_width()) - 56))
         except tk.TclError:
-            return 560  # fallback if Tk isn't ready
+            return 560  # safe fallback when tkinter is not fully ready yet
 
     def _pane_text_wrap(self) -> int:
-        """Same idea as _text_wrap but for the two-column results page."""
+        """same idea as _text_wrap but sized for the two column results page where each pane is about half the window."""
         self.update_idletasks()
         try:
-            # Each pane is ~half the window minus padding.
+            # each pane is roughly half the window width minus padding
             return max(300, min(720, int(self.winfo_width()) // 2 - 120))
         except tk.TclError:
             return 420
 
     def show_step(self, step: int) -> None:
-        """Switch the wizard to the given step (0, 1, or 2)."""
+        """switch the wizard to the given step number (0, 1, or 2) and rebuild the content area."""
         self.current_step = step
-        # Wipe whatever was in the content area before.
+        # clear whatever content was in the content area from the previous step
         self._clear(self.content)
-        # Wrap the step's content in a scroll frame so long pages still fit.
-        # The nav bar at the bottom stays put even if content scrolls.
+        # wrap the new step content in a scrollable frame so even very long pages still fit
+        # the nav buttons at the bottom are pinned outside this scroll area so they always stay visible
         step_scroll = ScrollableFrame(self.content, APP_BG)
         step_scroll.pack(fill="both", expand=True)
-        # `_step_host` is where step builders pack their widgets.
+        # _step_host is the inner frame where each step's build method places its widgets
         self._step_host = step_scroll.inner
-        # Update the colors of the step labels in the left rail.
+        # recolor the step labels in the left rail to reflect the new current step
         self._update_step_rail()
-        # Build the right body for this step and update the Next button label.
+        # build the content for the new step and update the next button label to match
         if step == 0:
             self._build_program_screen()
             self.back_button.configure(state="disabled")
@@ -2602,28 +2527,28 @@ class BenefitBridgeApp(tk.Tk):
             self._build_results_screen()
             self.back_button.configure(state="normal")
             self.next_button.configure(text=self._t("Draft Application"))
-        # Schedule an autosave whenever a step shows up.
+        # schedule an autosave shortly after the step loads
         self._schedule_draft_autosave()
-        # Update the footer message.
+        # update the footer to show which step the user is on
         self._status(self._t(f"Step {step + 1} of 3"))
 
     def _update_step_rail(self) -> None:
-        """Recolor the three step labels in the left rail to show progress.
-        Active = accent color, completed = green, future = muted gray."""
+        """recolor the three step labels in the left rail to show the user's progress.
+        the current step is highlighted in accent color, completed steps are green, and future steps are muted gray."""
         for index, label in enumerate(self.step_labels):
             if index == self.current_step:
-                # Highlighted current step.
+                # this is the step the user is currently on
                 label.configure(bg=CARD_BG, fg=ACCENT, font=(FONT_FAMILY, self._font_size(12), "bold"))
             elif index < self.current_step:
-                # Completed step (green).
+                # this step is already completed
                 label.configure(bg=RAIL_BG, fg=SUCCESS, font=(FONT_FAMILY, self._font_size(12), "bold"))
             else:
-                # Upcoming step (muted).
+                # this step has not been reached yet
                 label.configure(bg=RAIL_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(12)))
 
     def _build_program_screen(self) -> None:
-        """Build step 1: pick which programs to check."""
-        # === Page header text ===
+        """build step 0 (the first screen): the program picker where the user chooses which benefits to check."""
+        # large welcome heading at the top
         ttk.Label(self._step_host, text=self._t("Welcome"), style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
@@ -2635,13 +2560,13 @@ class BenefitBridgeApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", pady=(6, 14))
 
-        # === Three info "chip" cards across the top ===
+        # three small feature highlight cards that scroll horizontally if the window is narrow
         chips_container = HorizontalScrollableFrame(self._step_host, APP_BG)
         chips_container.pack(fill="x", pady=(0, 22))
         chips = chips_container.inner
-        # Each chip's wrap width is about a third of the available area.
+        # each chip is about a third of the available width
         chip_wrap = max(200, min(280, self._text_wrap() // 3))
-        # Loop over the chip data and build one card per item.
+        # build one small card for each feature bullet point
         for label, sub in (
             ("Smart reuse", "One questionnaire powers every program you pick."),
             ("Office radar", "Distance-ranked sites — hundreds of demo ZIP codes statewide."),
@@ -2649,20 +2574,20 @@ class BenefitBridgeApp(tk.Tk):
         ):
             c = self._card(chips)
             c.pack(side="left", fill="both", expand=False, padx=(0, 14))
-            cb = self._surface(c)  # the inner body of the rounded card
-            # Bold title.
+            cb = self._surface(c)  # get the inner body frame of the rounded card
+            # bold title label at the top of the chip
             tk.Label(cb, text=self._t(label), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(13), "bold")).pack(anchor="w", padx=18, pady=(16, 6))
-            # Description text.
+            # description text below the title
             tk.Label(cb, text=self._t(sub), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=chip_wrap, justify="left").pack(anchor="w", padx=18, pady=(0, 18))
 
-        # === Main "pick subsidies" card ===
+        # the main card where the user picks which programs to check
         card = self._card(self._step_host)
         card.pack(fill="x", expand=False)
         card_body = self._surface(card)
 
-        # Card heading.
+        # heading inside the card
         tk.Label(card_body, text=self._t("Which type of subsidy?"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(20), "bold")).pack(anchor="w", padx=24, pady=(24, 8))
-        # Subtitle / instruction.
+        # subtitle instruction text
         tk.Label(
             card_body,
             text=self._t("Choose one or more programs. Use Select all if you want a full scan."),
@@ -2673,26 +2598,26 @@ class BenefitBridgeApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=24, pady=(0, 18))
 
-        # Wrap width for each program's description.
+        # the wrap width for each program description line
         row_wrap = max(320, self._text_wrap() - 72)
-        # Build one row for each program in the PROGRAMS dict.
+        # build one program row block for each program in the programs dictionary
         for key, program in PROGRAMS.items():
-            # Outer block with a thin border.
+            # outer bordered block for this program row
             block = tk.Frame(card_body, bg=CARD_BG_HOVER, highlightbackground=BORDER, highlightthickness=1)
             block.pack(fill="x", padx=18, pady=12)
-            # Inner padded container.
+            # inner padded frame inside the border
             inner = tk.Frame(block, bg=CARD_BG_HOVER)
             inner.pack(fill="x", padx=16, pady=16)
-            # Top row: color swatch + checkbox + program name.
+            # top row with a color swatch, the checkbox, and the program name label
             head = tk.Frame(inner, bg=CARD_BG_HOVER)
             head.pack(fill="x", anchor="w")
-            # Vertical color bar matching the program's accent color.
+            # a narrow vertical color bar in the program's accent color
             swatch = tk.Frame(head, bg=program["color"], width=8, height=36)
             swatch.pack(side="left", fill="y", padx=(0, 14))
             swatch.pack_propagate(False)
-            # The checkbox itself, hooked up to the BooleanVar for this program.
+            # the checkbox tied to the tkinter variable for this program
             ModernCheckbox(head, text=self._t(program["name"]), variable=self.program_vars[key], bg=CARD_BG_HOVER, fg=TEXT).pack(side="left", anchor="nw", pady=(2, 0))
-            # The program's description below the checkbox row.
+            # the program description text shown below the checkbox row
             tk.Label(
                 inner,
                 text=self._t(program["description"]),
@@ -2703,22 +2628,24 @@ class BenefitBridgeApp(tk.Tk):
                 justify="left",
             ).pack(anchor="w", padx=(22, 8), pady=(12, 0))
 
-        # === Buttons at the bottom of the card ===
+        # action buttons at the bottom of the program picker card
         actions = tk.Frame(card_body, bg=CARD_BG)
         actions.pack(fill="x", padx=22, pady=(22, 26))
         self._button(actions, self._t("Select all"), self.select_all_programs, "secondary").pack(side="left")
         self._button(actions, self._t("Clear"), self.clear_programs, "ghost").pack(side="left", padx=10)
         self._button(actions, self._t("Suggest common bundle"), self.suggest_program_bundle, "accent").pack(side="right")
 
-        # === Eligibility estimator card ===
+        # the quick eligibility estimator card showing income limits for a family of 4
         est_card = self._card(self._step_host)
         est_card.pack(fill="x", pady=(18, 0))
         eb = self._surface(est_card)
         state = self.state_var.get()
+        # look up the selected state's income limits (fall back to california if the state is not in the table)
         state_lims = STATE_LIMITS.get(state, STATE_LIMITS["California"])
         snap_mult = SNAP_STATE_MULTIPLIERS.get(state, 2.0)
         tk.Label(eb, text=self._t("Quick eligibility snapshot"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(15), "bold")).pack(anchor="w", padx=22, pady=(20, 4))
         tk.Label(eb, text=self._t("Typical income limits, family of 4") + f" · {state}", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=self._text_wrap() - 48, justify="left").pack(anchor="w", padx=22, pady=(0, 14))
+        # the income limit rows for each program for a family of 4
         est_rows = [
             ("childcare",       state_lims.get("childcare", {}).get(4, 0)),
             ("food",            snap_mult * FPL_100_LIMITS[4]),
@@ -2726,6 +2653,7 @@ class BenefitBridgeApp(tk.Tk):
             ("internet",        FPL_200_LIMITS[4]),
             ("transportation",  state_lims.get("transportation", {}).get(4, 0)),
         ]
+        # draw one row per program with a color dot, a name, and the monthly income limit
         for prog_key, limit in est_rows:
             prog = PROGRAMS[prog_key]
             row = tk.Frame(eb, bg=CARD_BG)
@@ -2738,8 +2666,8 @@ class BenefitBridgeApp(tk.Tk):
         tk.Frame(eb, height=14, bg=CARD_BG).pack()
 
     def _build_info_screen(self) -> None:
-        """Build step 2: the form for the household profile."""
-        # === Title and intro paragraph ===
+        """build step 1: the household profile form where the user enters their information."""
+        # large heading at the top of the form
         ttk.Label(self._step_host, text=self._t("Household profile"), style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
@@ -2751,7 +2679,7 @@ class BenefitBridgeApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", pady=(6, 16))
 
-        # === ZIP code tip card ===
+        # a tip card reminding the user which zip codes work for distance calculations
         tip = self._card(self._step_host)
         tip.pack(fill="x", pady=(0, 12))
         tb = self._surface(tip)
@@ -2765,8 +2693,7 @@ class BenefitBridgeApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", padx=18, pady=14)
 
-        # === Two-column form layout ===
-        # Left column = basic info, right column = program-specific yes/no questions.
+        # the form uses a two column layout: basic info on the left, program specific questions on the right
         wrapper = tk.Frame(self._step_host, bg=APP_BG)
         wrapper.pack(fill="both", expand=True)
         left = self._card(wrapper)
@@ -2774,21 +2701,19 @@ class BenefitBridgeApp(tk.Tk):
         left.pack(side="left", fill="both", expand=True, padx=(0, 12))
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
 
-        # === Left column: basic personal info ===
+        # left column: basic personal information fields
         self._section_title(left, self._t("Basic personal info"))
-        # Each _field_row builds a labeled row with a widget under it.
-        # The lambda creates the actual input widget — done lazily so we
-        # control which parent row it goes into.
+        # each _field_row builds a labeled input field; the lambda creates the widget inside the row
         self._field_row(left, self._t("Name"), lambda row: self._entry(row, self.name_var), self._t("Enter the applicant's full name."))
         self._field_row(left, self._t("Income"), lambda row: self._income_field(row), self._t("Enter monthly income, or yearly income and choose Yearly."))
         self._field_row(left, self._t("Household size"), lambda row: self._spinbox(row, self.household_var, 1, 12), self._t("Everyone who shares income and expenses."))
         self._field_row(left, self._t("State"), lambda row: self._combo(row, self.state_var, STATE_OPTIONS), self._t("Choose the state for your location."))
         self._field_row(left, self._t("ZIP code"), lambda row: self._entry(row, self.location_var), self._t("Used to find nearby offices in the sample dataset."))
         self._field_row(left, self._t("Age range"), lambda row: self._combo(row, self.age_var, AGE_OPTIONS), "")
-        # Employment goes in the right column (continuing the form there).
+        # the employment field is placed at the top of the right column to continue the form flow
         self._field_row(right, self._t("Employment or school status"), lambda row: self._combo(row, self.employment_var, EMPLOYMENT_OPTIONS), "")
 
-        # === Right column: program-specific yes/no questions ===
+        # right column: yes or no questions specific to each program being checked
         self._section_title(right, self._t("Program-specific details"))
         self._check_row(right, self._t("US resident or qualified non-citizen"), self.residency_var, self._t("Used by food, utility, and internet sample checks."))
         self._check_row(right, self._t("Are you specifically looking for food with high nutritional value?"), self.healthy_var, self._t("It is highly recommended that you select this."))
@@ -2801,8 +2726,8 @@ class BenefitBridgeApp(tk.Tk):
         self._check_row(right, self._t("Need home internet for work, school, health, or benefits"), self.internet_need_var, self._t("Used by internet subsidy."))
         self._check_row(right, self._t("Need transportation for work, school, or medical appointments"), self.transportation_need_var, self._t("Used by transportation vouchers."))
 
-        # === Bottom summary card: which programs are selected ===
-        # Join the short names of selected programs with commas.
+        # a summary card at the bottom showing which programs the user has selected
+        # join the short names with commas for a compact readable list
         selected_names = ", ".join(PROGRAMS[key]["short_name"] for key in self.selected_programs)
         summary = self._card(self._step_host)
         summary.pack(fill="x", pady=(18, 0))
@@ -2810,7 +2735,7 @@ class BenefitBridgeApp(tk.Tk):
         tk.Label(summary_body, text=self._t("Selected programs"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(10), "bold")).pack(anchor="w", padx=18, pady=(14, 2))
         tk.Label(
             summary_body,
-            # If nothing is selected yet, show "None yet" instead of an empty string.
+            # if no programs are selected yet show "none yet" instead of an empty string
             text=selected_names or self._t("None yet"),
             bg=CARD_BG,
             fg=TEXT,
@@ -2820,8 +2745,8 @@ class BenefitBridgeApp(tk.Tk):
         ).pack(anchor="w", padx=18, pady=(0, 14))
 
     def _build_results_screen(self) -> None:
-        """Build step 3: the results workspace (digest stats, controls, list of offices)."""
-        # === Title and intro paragraph ===
+        """build step 2: the results workspace showing eligibility scores, office locations, and controls."""
+        # large heading at the top
         ttk.Label(self._step_host, text=self._t("Results workspace"), style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
@@ -2833,19 +2758,19 @@ class BenefitBridgeApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", pady=(10, 18))
 
-        # === Count how many programs landed in each status bucket ===
-        # `sum(1 for k in ...)` is a quick way to count things matching a condition.
+        # count how many programs landed in each eligibility status bucket
+        # sum(1 for ...) is a compact way to count items that match a condition
         highly = sum(1 for k in self.selected_programs if self.eligibility[k].status == "Highly eligible")
         partial = sum(1 for k in self.selected_programs if self.eligibility[k].status == "Partially eligible")
         unlikely = sum(1 for k in self.selected_programs if self.eligibility[k].status == "Unlikely")
 
-        # === Digest card: three big numbers ===
+        # the digest card shows three big colored numbers summarizing the results
         digest = self._card(self._step_host)
         digest.pack(fill="x", pady=(0, 18))
         dg = self._surface(digest)
         rowd = tk.Frame(dg, bg=CARD_BG)
         rowd.pack(fill="x", padx=22, pady=(22, 22))
-        # Build one big-number cell per status bucket.
+        # build one big number cell for each status category
         for title, value, color in (
             ("Highly eligible", str(highly), SUCCESS),
             ("Partially eligible", str(partial), WARNING),
@@ -2853,22 +2778,22 @@ class BenefitBridgeApp(tk.Tk):
         ):
             cell = tk.Frame(rowd, bg=CARD_BG)
             cell.pack(side="left", padx=(0, 44))
-            # Large colored number on top.
+            # the large number in the status color
             tk.Label(cell, text=value, bg=CARD_BG, fg=color, font=(FONT_FAMILY, self._font_size(26), "bold")).pack(anchor="w", pady=(0, 6))
-            # Smaller label below it.
+            # smaller descriptive label below the number
             tk.Label(cell, text=self._t(title), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=140, justify="left").pack(anchor="w")
 
-        # === Controls card: location, radius, action buttons, what-if slider, search/sort ===
+        # the controls card holds the location, radius slider, action buttons, what if slider, and office search
         controls = self._card(self._step_host)
         controls.pack(fill="x", pady=(0, 18))
         controls_body = self._surface(controls)
 
-        # Top row of the controls card: just the user's location.
+        # top row: show the user's location
         top = tk.Frame(controls_body, bg=CARD_BG)
         top.pack(fill="x", padx=22, pady=(20, 14))
         loc_lbl = tk.Label(
             top,
-            # .get(key, default) returns "Not provided" if no location was set.
+            # if no location was set, show "not provided" as a friendly fallback
             text=f"Location: {self.user_data.get('location_input', self._t('Not provided'))}",
             bg=CARD_BG,
             fg=TEXT,
@@ -2878,10 +2803,10 @@ class BenefitBridgeApp(tk.Tk):
         )
         loc_lbl.pack(anchor="w", fill="x")
 
-        # Second row: radius picker + action buttons.
+        # second row: the radius slider and action buttons
         row_btns = tk.Frame(controls_body, bg=CARD_BG)
         row_btns.pack(fill="x", padx=22, pady=(0, 16))
-        # Radius dropdown grouped together.
+        # the radius slider grouped with its label and value display
         rad_frame = tk.Frame(row_btns, bg=CARD_BG)
         rad_frame.pack(side="left")
         tk.Label(rad_frame, text=self._t("Search radius"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
@@ -2891,10 +2816,12 @@ class BenefitBridgeApp(tk.Tk):
         rad_slider.pack(side="left", padx=(0, 16))
 
         def _rad_motion(_event=None):
+            # update the radius label live as the slider moves
             v = round(self._radius_dbl.get())
             self._radius_lbl.configure(text=f"{v} mi")
 
         def _rad_release(_event=None):
+            # when the user lets go of the slider, lock in the value and refresh the office list
             v = round(self._radius_dbl.get())
             self._radius_lbl.configure(text=f"{v} mi")
             self.radius_var.set(str(v))
@@ -2902,13 +2829,13 @@ class BenefitBridgeApp(tk.Tk):
 
         rad_slider.bind("<Motion>", _rad_motion)
         rad_slider.bind("<ButtonRelease-1>", _rad_release)
-        # Other action buttons in the same row.
+        # the other action buttons that go in the same row as the radius slider
         self._button(row_btns, self._t("Save CSV history"), self.save_case_history, "ghost").pack(side="left", padx=6)
         self._button(row_btns, self._t("Copy summary"), self.copy_results_summary, "ghost").pack(side="left", padx=6)
         self._button(row_btns, self._t("Print list"), self.print_office_list, "ghost").pack(side="left", padx=6)
         self._button(row_btns, self._t("Edit profile"), lambda: self.show_step(1), "ghost").pack(side="right", padx=6)
 
-        # Third row: the "what-if" income slider.
+        # third row: the what if income slider lets the user ask "what if my income were higher or lower"
         mid = tk.Frame(controls_body, bg=CARD_BG)
         mid.pack(fill="x", padx=22, pady=(8, 18))
         tk.Label(
@@ -2920,13 +2847,13 @@ class BenefitBridgeApp(tk.Tk):
             wraplength=self._text_wrap() - 48,
             justify="left",
         ).pack(anchor="w", pady=(0, 10))
-        # Slider row: the slider on the left, a "100%" label on the right.
+        # the slider and its current percent value label side by side
         sc_row = tk.Frame(mid, bg=CARD_BG)
         sc_row.pack(fill="x", pady=(4, 0))
-        # Scale (slider) from 50% to 150% of the user's actual income.
+        # slider ranges from 50% to 150% of the user's actual income
         scale = ttk.Scale(sc_row, from_=50, to=150, variable=self.income_scenario_pct, orient="horizontal")
         scale.pack(side="left", fill="x", expand=True, padx=(0, 12))
-        # Label that shows the current slider value.
+        # label showing the current slider value as a percentage
         self._scenario_value_lbl = tk.Label(
             sc_row,
             text="100%",
@@ -2937,19 +2864,18 @@ class BenefitBridgeApp(tk.Tk):
         )
         self._scenario_value_lbl.pack(side="right")
 
-        # Helper that updates the percent label as the slider moves.
         def _slide(_event: tk.Event | None = None) -> None:
+            # update the percentage label live as the slider moves
             self._scenario_value_lbl.configure(text=f"{self.income_scenario_pct.get():.0f}%")
 
-        # While dragging, update the label live.
+        # update the label continuously while dragging
         scale.bind("<Motion>", _slide)
-        # Only recompute eligibility when the user lets go of the slider.
-        # (Recomputing on every pixel move would be too slow.)
+        # only recalculate eligibility when the user releases the slider to avoid slowness during dragging
         scale.bind("<ButtonRelease-1>", lambda _e: self.apply_income_scenario())
-        # Show the initial label.
+        # show the starting label right away
         _slide()
 
-        # "What changed" label — updated by apply_income_scenario.
+        # a label that shows what changed when the user adjusts the what if slider
         self._scenario_change_lbl = tk.Label(
             mid,
             text="",
@@ -2961,37 +2887,37 @@ class BenefitBridgeApp(tk.Tk):
         )
         self._scenario_change_lbl.pack(anchor="w", pady=(8, 0))
 
-        # Bottom row: office search + sort + filter buttons.
+        # bottom row of the controls card: the office search box, sort dropdown, and filter checkboxes
         bot = tk.Frame(controls_body, bg=CARD_BG)
         bot.pack(fill="x", padx=22, pady=(4, 22))
         tk.Label(bot, text=self._t("Office list"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(12), "bold")).pack(anchor="w", pady=(0, 10))
         row_f = tk.Frame(bot, bg=CARD_BG)
         row_f.pack(fill="x", pady=(0, 8))
-        # Search box.
+        # the search box for typing part of an office name, city, or street
         tk.Label(row_f, text=self._t("Search"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
         se = tk.Entry(
             row_f,
             textvariable=self.office_search_var,
             bg=INPUT_BG,
             fg=TEXT,
-            insertbackground=TEXT,         # cursor color
+            insertbackground=TEXT,         # the cursor color inside the text field
             relief="flat",
             bd=0,
             width=32,
             font=(FONT_FAMILY, self._font_size(11)),
             highlightthickness=2,
             highlightbackground=BORDER,
-            highlightcolor=BORDER_FOCUS,   # color when the entry is focused
+            highlightcolor=BORDER_FOCUS,   # the highlight border color when the field is focused
         )
-        self._focus_ring(se)               # accent border on focus
+        self._focus_ring(se)               # make the border glow accent color when focused
         se.pack(side="left", padx=(10, 20), ipady=8)
-        # Sort dropdown.
+        # the dropdown to sort offices by distance or by name
         tk.Label(row_f, text=self._t("Sort by"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
         ttk.Combobox(row_f, values=("distance", "name"), width=11, state="readonly", textvariable=self.office_sort_var).pack(side="left", padx=(10, 14))
         self._button(row_f, self._t("Apply filter"), self._office_filter_changed, "secondary").pack(side="left", padx=6)
         self._button(row_f, self._t("Copy all addresses"), self.copy_all_office_addresses, "ghost").pack(side="right", padx=6)
 
-        # Program filter + favorites row.
+        # a row of per program filter checkboxes and the favorites only toggle
         prog_row = tk.Frame(bot, bg=CARD_BG)
         prog_row.pack(fill="x", pady=(0, 4))
         tk.Label(prog_row, text=self._t("Show:"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
@@ -3011,7 +2937,7 @@ class BenefitBridgeApp(tk.Tk):
             command=self._office_filter_changed,
         ).pack(side="left")
 
-        # === Document checklist card ===
+        # the document checklist card showing what documents to bring when visiting an office
         docs = self._card(self._step_host)
         docs.pack(fill="x", pady=(0, 18))
         db = self._surface(docs)
@@ -3025,18 +2951,16 @@ class BenefitBridgeApp(tk.Tk):
             wraplength=self._text_wrap() - 48,
             justify="left",
         ).pack(anchor="w", padx=22, pady=(0, 14))
-        # Build the lines for the checklist: master list first, then any
-        # extra items needed for each selected program.
+        # build the checklist: universal items first, then program specific items with the program name in brackets
         lines: list[str] = []
         lines.extend(f"• {item}" for item in MASTER_DOCUMENT_LIST)
         for pk in self.selected_programs:
             for line in PROGRAM_CHECKLISTS.get(pk, []):
-                # Tag program-specific lines with the short name in brackets.
                 lines.append(f"• [{PROGRAMS[pk]['short_name']}] {line}")
-        # "Well" is just the inset background that frames the read-only Text widget.
+        # the "well" is a slightly inset frame that gives the text area a border effect
         well = tk.Frame(db, bg=BORDER, bd=0, highlightthickness=0)
         well.pack(fill="x", padx=22, pady=(0, 22))
-        # Multi-line read-only text area showing the checklist.
+        # a multiline read only text area showing the checklist items
         chk = tk.Text(
             well,
             height=11,
@@ -3050,44 +2974,47 @@ class BenefitBridgeApp(tk.Tk):
             padx=18,
             pady=18,
         )
-        # Insert all lines starting at the very beginning ("1.0" = line 1, char 0).
+        # insert all the checklist lines starting at position 1.0 (line 1, character 0)
         chk.insert("1.0", "\n".join(lines))
-        # Disable so the user can't type into it (still selectable for copying).
+        # disable editing so the user cannot type in this area, but they can still select and copy text
         chk.configure(state="disabled")
         chk.pack(fill="x", padx=3, pady=3)
 
-        # === Two-column split pane: eligibility cards | nearby offices ===
-        # PanedWindow lets the user drag the divider between the two columns.
+        # a split pane dividing the screen between eligibility cards on the left and nearby offices on the right
+        # the user can drag the divider to resize the two columns
         pane = tk.PanedWindow(self._step_host, orient="horizontal", bg=APP_BG, sashwidth=10, bd=0, sashrelief="flat")
         pane.pack(fill="both", expand=True, pady=(4, 0))
-        # Each side is its own scrollable frame.
+        # each column is a separate scrollable frame
         self.results_frame = ScrollableFrame(pane, background=APP_BG)
         self.locations_frame = ScrollableFrame(pane, background=APP_BG)
-        # Add to the pane with minimum widths so neither side disappears.
+        # add both to the pane with minimum widths so neither side can collapse to nothing
         pane.add(self.results_frame, minsize=440)
         pane.add(self.locations_frame, minsize=460)
 
-        # Calculate the filtered/sorted office list and render both columns.
+        # calculate the filtered and sorted office list then render both columns
         self._sync_location_view()
         self._render_eligibility_cards()
         self._render_location_cards()
 
     def apply_income_scenario(self, _event: tk.Event | None = None) -> None:
-        """Re-run rules against hypothetical monthly income (slider % of saved baseline)."""
+        """re run eligibility using a hypothetical monthly income equal to the slider percentage of the user's actual income."""
         if not self.user_data:
             return
         pct = float(self.income_scenario_pct.get())
+        # save the current statuses so we can compare them after recalculation
         old_statuses = {k: self.eligibility[k].status for k in self.selected_programs}
         u = dict(self.user_data)
+        # scale the baseline monthly income by the slider percentage
         u["monthly_income"] = self._baseline_monthly * (pct / 100.0)
         self.eligibility = compute_eligibility(self.selected_programs, u)
-        # Build "what changed" message.
+        # build the "what changed" message by comparing old and new statuses
         changes = []
         for k in self.selected_programs:
             old = old_statuses.get(k, "")
             new = self.eligibility[k].status
             if old != new:
                 short = PROGRAMS[k]["short_name"]
+                # the up arrow means the eligibility improved; down means it got worse
                 arrow = "↑" if new == "Highly eligible" or (new == "Partially eligible" and old == "Unlikely") else "↓"
                 changes.append(f"{short}: {new} {arrow}")
         if hasattr(self, "_scenario_change_lbl"):
@@ -3105,10 +3032,11 @@ class BenefitBridgeApp(tk.Tk):
         self._status(f"What-if income applied at {pct:.0f}% of reported monthly")
 
     def _sync_location_view(self) -> None:
-        """Filter + sort the in-memory office list for the right-hand column."""
+        """filter and sort the in memory office list and store the result in _location_view for the right hand column."""
         q = self.office_search_var.get().strip().lower()
         items = list(self.location_results)
         if q:
+            # keep only offices whose name, address, or city contains the search text
             items = [
                 x
                 for x in items
@@ -3116,28 +3044,30 @@ class BenefitBridgeApp(tk.Tk):
                 or q in str(x["location"]["address"]).lower()
                 or q in str(x["location"].get("city", "")).lower()
             ]
-        # Program filter — only apply if at least one program is unchecked.
+        # apply program filter only when at least one program checkbox is unchecked
         active_progs = {k for k, v in self.prog_filter_vars.items() if v.get()}
         if active_progs != set(PROGRAMS.keys()):
             items = [x for x in items if any(p in active_progs for p in x["programs"])]
-        # Favorites filter.
+        # apply favorites filter if the "favorites only" checkbox is ticked
         if self.show_favorites_var.get():
             items = [x for x in items if _loc_key(x["location"]) in self.favorite_keys]
         mode = self.office_sort_var.get()
         if mode == "name":
             items.sort(key=lambda it: str(it["location"]["name"]).lower())
         else:
+            # sort by distance (with a large sentinel for unknown distances) then alphabetically as a tiebreaker
             items.sort(key=lambda it: (9999.0 if it["distance"] is None else float(it["distance"]), str(it["location"]["name"]).lower()))
         self._location_view = items
 
     def _office_filter_changed(self, *_args: object) -> None:
+        # called whenever a filter checkbox or the search box changes; only do work on the results screen
         if self.current_step != 2:
             return
         self._sync_location_view()
         self._render_location_cards()
 
     def copy_results_summary(self) -> None:
-        """Clipboard-friendly snapshot for email or SMS to a navigator."""
+        """copy a plain text summary of eligibility results to the clipboard; useful for emailing or texting to a caseworker."""
         lines = [
             f"Benefit Bridge session {self.session_id}",
             f"Location: {self.user_data.get('location_input', '')}",
@@ -3207,11 +3137,11 @@ class BenefitBridgeApp(tk.Tk):
         self._toast(self._t("Office list opened in browser — use your browser's Print function"))
 
     def _toggle_lang(self) -> None:
-        """Swap the UI language between English and Spanish and rebuild the current step."""
+        """switch the ui between english and spanish and rebuild the current step so all text updates."""
         self._lang = "es" if self._lang == "en" else "en"
-        # Update button label.
+        # update the language toggle button label to show the other language
         self._lang_btn.configure(text="EN" if self._lang == "es" else "ES")
-        # Update persistent shell widgets (rail + nav) that were built once.
+        # update the persistent shell widgets (rail and nav buttons) that were built only once and not rebuilt on each step
         step_keys = ["1. Choose subsidies", "2. Household profile", "3. Results & offices"]
         for lbl, key in zip(self.step_labels, step_keys):
             lbl.configure(text=self._t(key))
@@ -3221,10 +3151,11 @@ class BenefitBridgeApp(tk.Tk):
         self._nav_loaddraft_btn.configure(text=self._t("Load draft"))
         hint_base = "Sample rules only — always confirm with the office before applying."
         self._rail_hint.configure(text=f"{self._t(BRAND_SLOGAN)}. {self._t(hint_base)}")
-        # Rebuild the current step with the new language.
+        # rebuild the current step so all its content translates to the new language
         self.show_step(self.current_step)
 
     def _render_eligibility_cards(self) -> None:
+        # clear the left panel and rebuild one card per selected program
         self._clear(self.results_frame.inner)
         wl = self._pane_text_wrap()
         tk.Label(self.results_frame.inner, text=self._t("Eligibility detail"), bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
@@ -3234,10 +3165,10 @@ class BenefitBridgeApp(tk.Tk):
             card = self._card(self.results_frame.inner)
             card.pack(fill="x", pady=(0, 18), padx=(0, 10))
             card_body = self._surface(card)
-            # For food programs, extract which specific programs (SNAP/WIC) user qualifies for
+            # for food programs try to extract the specific sub programs (snap or wic) from the passed text for a more useful title
             display_name = program["name"]
             if program_key == "food" and result.passed:
-                # Extract program names from passed text (e.g., "Income qualifies for SNAP (165% limit) and WIC (185% limit)")
+                # look for the pattern "income qualifies for snap (165% limit) and wic (185% limit)" in the passed messages
                 for passed_item in result.passed:
                     if "qualifies for" in passed_item:
                         parts = passed_item.split("qualifies for ")
@@ -3255,6 +3186,7 @@ class BenefitBridgeApp(tk.Tk):
             ).pack(anchor="w", padx=22, pady=(20, 8))
             badge_row = tk.Frame(card_body, bg=CARD_BG)
             badge_row.pack(fill="x", padx=22, pady=(0, 10))
+            # the status pill badge showing "high match", "partial", or "unlikely"
             PillLabel(
                 badge_row,
                 status_pill_caption(result.status),
@@ -3262,6 +3194,7 @@ class BenefitBridgeApp(tk.Tk):
                 STATUS_TEXT_COLORS[result.status],
                 CARD_BG,
             ).pack(anchor="w")
+            # the plain english explanation paragraph below the badge
             tk.Label(
                 card_body,
                 text=result.explanation,
@@ -3271,16 +3204,19 @@ class BenefitBridgeApp(tk.Tk):
                 wraplength=wl,
                 justify="left",
             ).pack(anchor="w", padx=22, pady=(0, 14))
+            # show the rules they met in green and the rules that need review in yellow
             if result.passed:
                 self._mini_list(card_body, self._t("Rules met"), result.passed, SUCCESS)
             if result.missed:
                 self._mini_list(card_body, self._t("Needs review"), result.missed, WARNING)
 
     def _render_location_cards(self) -> None:
+        # clear the right panel and rebuild one card per visible office location
         self._clear(self.locations_frame.inner)
         wl = self._pane_text_wrap()
         tk.Label(self.locations_frame.inner, text=self._t("Nearby offices"), bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
         eligible_keys = self.programs_for_locations()
+        # if no programs are eligible, show a card explaining why no offices appear
         if not eligible_keys:
             self._empty_card(
                 self.locations_frame.inner,
@@ -3288,6 +3224,7 @@ class BenefitBridgeApp(tk.Tk):
                 self._t("Offices appear only for programs marked Highly eligible or Partially eligible. Increase income scenario or adjust answers, then update the list."),
             )
             return
+        # if there are eligible programs but no offices within the radius, show a helpful message
         if not self.location_results:
             self._empty_card(
                 self.locations_frame.inner,
@@ -3295,9 +3232,11 @@ class BenefitBridgeApp(tk.Tk):
                 self._t("Try a larger radius or a sample city such as Sunnyvale, San Jose, Oakland, Los Angeles, San Diego, or Sacramento."),
             )
             return
+        # if there are offices but the filters removed them all, tell the user to clear the search
         if not self._location_view:
             self._empty_card(self.locations_frame.inner, self._t("No filter matches"), self._t("Clear the office search box or type part of a name, city, or street."))
             return
+        # build one card per office in the current filtered and sorted view
         for item in self._location_view:
             location = item["location"]
             matching_programs = item["programs"]
@@ -3305,6 +3244,7 @@ class BenefitBridgeApp(tk.Tk):
             card = self._card(self.locations_frame.inner)
             card.pack(fill="x", pady=(0, 18), padx=(0, 10))
             card_body = self._surface(card)
+            # office name at the top of the card
             tk.Label(
                 card_body,
                 text=location["name"],
@@ -3316,7 +3256,9 @@ class BenefitBridgeApp(tk.Tk):
             ).pack(anchor="w", padx=22, pady=(20, 8))
             meta = tk.Frame(card_body, bg=CARD_BG)
             meta.pack(fill="x", padx=22, pady=(0, 10))
+            # a pill badge showing the distance to this office
             PillLabel(meta, distance_text, "#273549", TEXT, CARD_BG).pack(anchor="w")
+            # the street address below the distance pill
             tk.Label(
                 card_body,
                 text=location["address"],
@@ -3329,6 +3271,7 @@ class BenefitBridgeApp(tk.Tk):
             program_names = ", ".join(PROGRAMS[key]["short_name"] for key in matching_programs)
             best_status = self.best_status_for(matching_programs)
             next_step = f"Handles {program_names}. Best match status for overlapping programs: {best_status}."
+            # a short summary of which programs this office handles and the best eligibility status
             tk.Label(
                 card_body,
                 text=next_step,
@@ -3338,6 +3281,7 @@ class BenefitBridgeApp(tk.Tk):
                 wraplength=wl,
                 justify="left",
             ).pack(anchor="w", padx=22, pady=(0, 14))
+            # a row of buttons the user can click to act on this office
             actions = tk.Frame(card_body, bg=CARD_BG)
             actions.pack(fill="x", padx=22, pady=(0, 22))
             addr = str(location["address"])
@@ -3346,6 +3290,7 @@ class BenefitBridgeApp(tk.Tk):
             self._button(actions, self._t("Open in Maps"), partial(open_location_in_maps, _maps_query(location)), "ghost").pack(side="left", padx=(0, 6))
             self._button(actions, self._t("Directions"), partial(open_directions_in_maps, _maps_query(location), origin), "ghost").pack(side="left")
             fav_key = _loc_key(location)
+            # pick the star label based on whether this office is already saved as a favorite
             star_label = self._t("★ Saved") if fav_key in self.favorite_keys else self._t("☆ Save")
             self._button(actions, star_label, partial(self._toggle_favorite, fav_key), "ghost").pack(side="right")
 
@@ -3450,7 +3395,7 @@ class BenefitBridgeApp(tk.Tk):
         row = tk.Frame(parent, bg=CARD_BG)
         row.pack(fill="x", padx=18, pady=12)
         
-        # Use custom modern checkbox instead of ttk.Checkbutton
+        # use the custom dark themed checkbox widget instead of the default system one
         checkbox = ModernCheckbox(row, text=label, variable=variable, bg=CARD_BG, fg=TEXT)
         checkbox.pack(anchor="w")
         
@@ -3466,7 +3411,7 @@ class BenefitBridgeApp(tk.Tk):
             variable.set(False)
 
     def suggest_program_bundle(self) -> None:
-        """One-click preset for the most common “household basics” combo in demos."""
+        """one-click preset that selects the most common household basics programs for demos."""
         for key in ("food", "utility", "internet"):
             self.program_vars[key].set(True)
         self._toast("Applied suggested bundle: food + utilities + internet")
@@ -3629,70 +3574,69 @@ class BenefitBridgeApp(tk.Tk):
 
     def go_next(self) -> None:
         """
-        The 'Next' button handler — the wizard's brain. What it does depends on
-        which step the user is currently on:
+        handles the next button. the behavior depends on which step the user is on.
 
-          Step 0 (program selection):
-            → Validate that at least one program checkbox is ticked.
-            → If OK, advance to step 1.
+        step 0 (program selection):
+            validate that at least one program checkbox is ticked.
+            if ok, advance to step 1.
 
-          Step 1 (household profile):
-            → Validate all form fields (income, household size, location, etc.).
-            → If OK, run compute_eligibility() to get the pass/fail results.
-            → Find nearby offices, then advance to step 2 (results screen).
+        step 1 (household profile):
+            validate all form fields (income, household size, location, etc.).
+            if ok, run compute_eligibility() to get the pass/fail results.
+            find nearby offices, then advance to step 2 (results screen).
 
-          Step 2 (results):
-            → The 'Next' button becomes 'Save application' — saves a printable PDF/report.
+        step 2 (results):
+            the next button becomes save application and saves a printable report.
         """
         if self.current_step == 0:
-            # Step 0 → 1: make sure at least one program is checked.
+            # step 0 to 1: make sure at least one program is checked
             if self.collect_programs():
                 self.show_step(1)
         elif self.current_step == 1:
-            # Step 1 → 2: validate the profile, then run the eligibility engine.
+            # step 1 to 2: validate the profile then run the eligibility engine
             if self.collect_user_data():
-                # Remember the income the user entered so the "what-if" slider works correctly.
+                # remember the income the user entered so the what if slider works correctly
                 self._baseline_monthly = float(self.user_data["monthly_income"])
-                # Reset the scenario slider and search filters so results are clean.
+                # reset the scenario slider and search filters so results start clean
                 self.income_scenario_pct.set(100.0)
                 self.office_search_var.set("")
                 self.office_sort_var.set("distance")
-                # THE CORE STEP: run all the eligibility checks and store results.
+                # run all the eligibility checks and store the results
                 self.eligibility = compute_eligibility(self.selected_programs, self.user_data)
-                # Find offices near the user that can help with programs they qualify for.
+                # find offices near the user that can help with programs they qualify for
                 self.refresh_location_data()
-                # Advance to the results screen.
+                # advance to the results screen
                 self.show_step(2)
         else:
-            # Step 2: save the application to disk.
+            # step 2: save the application to disk
             self.save_draft_application()
 
     def go_back(self) -> None:
-        """Go back one step. Does nothing if already on step 0 (the first step)."""
+        """go back one step. does nothing if already on step 0 (the first step)."""
         if self.current_step > 0:
             self.show_step(self.current_step - 1)
 
     def start_over(self) -> None:
         """
-        Reset ALL form fields and results back to their initial/default values.
-        Asks the user to confirm first because this action clears all their work.
+        reset all form fields and results back to their initial default values.
+        asks the user to confirm first because this action clears all their work.
         """
-        # Show a Yes/No dialog — bail out if they click No.
+        # show a yes/no dialog and bail out if they click no
         if not messagebox.askyesno("Start over", "Clear this run and start again?"):
             return
-        # Reset all program checkboxes to unchecked.
+        # reset all program checkboxes to unchecked
         for variable in self.program_vars.values():
             variable.set(False)
-        # Reset every form field to its default value.
+        # reset every form field to its default value
         self.income_var.set("")                          # clear income amount
         self.income_period_var.set("Monthly")            # default: monthly
         self.household_var.set(3)                        # default household size
-        self.location_var.set("")                        # clear ZIP/city
+        self.location_var.set("")                        # clear zip or city
         self.state_var.set("California")                 # default state
         self.age_var.set("Adult")                        # default age range
         self.employment_var.set(EMPLOYMENT_OPTIONS[0])   # first option = "Working"
         self.residency_var.set(True)
-        self.healthy_var.set(True)                     # default: is a resident
+        self.healthy_var.set(True)                       # default: is healthy
         self.child_under_13_var.set(True)                # default: has child under 13
         self.child_under_5_var.set(False)                # default: no child under 5
         self.utility_hardship_var.set(False)             # default: no utility hardship
@@ -3705,94 +3649,94 @@ class BenefitBridgeApp(tk.Tk):
         for v in self.prog_filter_vars.values():
             v.set(True)
         self.show_favorites_var.set(False)
-        self.income_scenario_pct.set(100.0)              # reset what-if slider to 100%
+        self.income_scenario_pct.set(100.0)              # reset what if slider to 100%
         self._baseline_monthly = 0.0                     # reset the baseline income
         self._location_view = []                         # clear filtered location results
         self.selected_programs = []                      # clear selected programs list
         self.user_data = {}                              # clear the household profile dict
         self.eligibility = {}                            # clear all eligibility results
         self.location_results = []                       # clear the list of nearby offices
-        # Go back to the first step.
+        # go back to the first step
         self.show_step(0)
 
 
 def parse_money(value: str) -> float:
     """
-    Convert what the user typed in the income field into a plain float.
-    Handles common formats like "$2,750", "2750", "2,750.00".
+    convert what the user typed in the income field into a plain float.
+    handles common formats like "$2,750", "2750", "2,750.00".
 
-    Strips the dollar sign and commas first, then converts to a float.
-    Raises ValueError if the string is empty or not a valid finite number
-    (e.g. "infinity" or "NaN" would pass float() but fail isfinite).
+    strips the dollar sign and commas first, then converts to a float.
+    raises valueerror if the string is empty or not a valid finite number
+    (for example "infinity" or "NaN" would pass float() but fail isfinite).
     """
-    # Remove $ signs and commas so "2,750" becomes "2750" before converting.
+    # remove dollar signs and commas so "2,750" becomes "2750" before converting
     cleaned = value.replace("$", "").replace(",", "").strip()
     if not cleaned:
         raise ValueError("empty amount")   # user left the field blank
     amount = float(cleaned)
     if not math.isfinite(amount):
-        raise ValueError("invalid amount")  # reject inf/-inf/NaN
+        raise ValueError("invalid amount")  # reject inf, negative inf, or not a number
     return amount
 
 
 def extract_zip(location_input: str) -> str | None:
     """
-    Pull a 5-digit ZIP code out of whatever the user typed in the location field.
-    Works for inputs like "94085", "Sunnyvale, CA 94085", "ZIP: 94085", etc.
+    pull a 5-digit zip code out of whatever the user typed in the location field.
+    works for inputs like "94085", "Sunnyvale, CA 94085", "ZIP: 94085", etc.
 
-    Returns the ZIP as a string (e.g. "94085"), or None if no ZIP is found.
+    returns the zip as a string (for example "94085"), or none if no zip is found.
     """
-    # Look for any sequence of exactly 5 digits surrounded by word boundaries.
+    # look for any sequence of exactly 5 digits surrounded by word boundaries
     match = re.search(r"\b\d{5}\b", location_input)
     if match:
-        return match.group(0)   # return the first 5-digit match
-    # Fallback: if the whole input is just 5 digits (no spaces/punctuation), treat it as a ZIP.
+        return match.group(0)   # return the first 5 digit match we found
+    # fallback: if the whole input is just 5 digits with no spaces, treat it as a zip
     stripped = location_input.strip()
     return stripped if stripped.isdigit() and len(stripped) == 5 else None
 
 
 def extract_city(location_input: str) -> str | None:
     """
-    Try to extract a recognizable city name from the user's location input.
-    Only used when there's no ZIP code in the input.
+    try to extract a recognizable city name from the user's location input.
+    only used when there is no zip code in the input.
 
-    Strategy:
-      1. Strip everything that isn't a letter or space.
-      2. Lowercase and collapse multiple spaces.
-      3. Check if any known city name (from CITY_COORDS) appears as a whole word.
-         We check longest city names first to avoid "san" matching before "san jose".
-      4. If no known city matches, return the cleaned text as-is (best-effort).
+    strategy:
+      1. strip everything that is not a letter or space.
+      2. lowercase and collapse multiple spaces.
+      3. check if any known city name (from city_coords) appears as a whole word.
+         we check longest city names first to avoid "san" matching before "san jose".
+      4. if no known city matches, return the cleaned text as is (best effort).
 
-    Returns None if the input had a ZIP (handled by extract_zip instead).
+    returns none if the input had a zip (handled by extract_zip instead).
     """
-    # If there's a ZIP in the input, we don't need a city — return None.
+    # if there is a zip in the input we do not need a city
     if extract_zip(location_input):
         return None
-    # Strip everything except letters and spaces, then lowercase.
+    # strip everything except letters and spaces then lowercase
     city = re.sub(r"[^A-Za-z ]", " ", location_input).strip().lower()
-    # Collapse multiple spaces into one (e.g. "san  jose" → "san jose").
+    # collapse multiple spaces into one (for example "san  jose" becomes "san jose")
     city = " ".join(city.split())
     if not city:
-        return None   # input had no letters at all (e.g. just numbers)
-    # Check against known cities — longest names first to avoid partial matches.
+        return None   # input had no letters at all
+    # check against known cities with longest names first to avoid partial matches
     for known_city in sorted(CITY_COORDS, key=len, reverse=True):
         if re.search(rf"\b{re.escape(known_city)}\b", city):
-            return known_city   # found a match — return the canonical city name
-    # No known city found — return whatever the user typed, cleaned up.
+            return known_city   # found a match so return the canonical city name
+    # no known city found so return whatever the user typed, cleaned up
     return city
 
 
 def extra_person_amount(state: str, program_key: str) -> int:
-    # Look up the per-extra-person dollar increment for this state + program.
-    # First checks the state-specific table; if not found, falls back to the
-    # federal FPL-based defaults (used for internet). Returns 0 if unknown.
+    # look up the per extra person dollar increment for this state and program
+    # first checks the state specific table and if not found falls back to
+    # the federal fpl based defaults (used for internet). returns 0 if unknown
     return STATE_EXTRA_PERSON_AMOUNTS.get(state, {}).get(program_key, FPL_EXTRA_PERSON_AMOUNTS.get(program_key, 0))
 
 
 def utility_eligibility_limit(utility_limits: dict[int, int], household_size: int, state: str) -> float:
-    # Utility programs use whichever limit is HIGHER — the state's own table
-    # or 150% of the federal poverty line. This protects households in states
-    # with a low state limit but a relatively high poverty line.
+    # utility programs use whichever limit is higher: the state's own table
+    # or 150% of the federal poverty line. this protects households in states
+    # with a low state limit but a relatively high poverty line
     state_limit = limit_for_household(utility_limits, household_size, extra_person_amount(state, "utility"))
     fpl_limit = limit_for_household(FPL_150_LIMITS, household_size, FPL_150_EXTRA_PERSON_AMOUNT)
     return max(state_limit, fpl_limit)
@@ -3800,21 +3744,21 @@ def utility_eligibility_limit(utility_limits: dict[int, int], household_size: in
 
 def compute_eligibility(selected_programs: list[str], user_data: dict[str, object]) -> dict[str, ProgramResult]:
     """
-    Run every selected program's eligibility rules and return a result for each.
+    run every selected program's eligibility rules and return a result for each.
 
-    Food is handled separately by food_eligibility() because it has dual-path
-    logic (SNAP + WIC) and state-specific FPL tables. Every other program goes
-    through the standard checks → classify_program() pipeline.
+    food is handled separately by food_eligibility() because it has dual-path
+    logic (snap + wic) and state-specific fpl tables. every other program goes
+    through the standard checks then classify_program() pipeline.
     """
     results: dict[str, ProgramResult] = {}
     state = str(user_data.get("state", "California"))
-    # Load this state's income limit tables. Falls back to California if unknown.
+    # load this state's income limit tables and fall back to california if unknown
     limits = STATE_LIMITS.get(state, STATE_LIMITS["California"])
     for program_key in selected_programs:
         if program_key == "childcare":
             checks = childcare_checks(user_data, limits["childcare"], state)
         elif program_key == "food":
-            # Food gets its own function — skips the generic classify_program() step.
+            # food gets its own function and skips the generic classify_program() step
             results[program_key] = food_eligibility(user_data, state)
             continue
         elif program_key == "utility":
@@ -3823,24 +3767,24 @@ def compute_eligibility(selected_programs: list[str], user_data: dict[str, objec
             checks = internet_checks(user_data, limits["internet"], state)
         else:
             checks = transportation_checks(user_data, limits["transportation"], state)
-        # Turn the list of rule checks into a single pass/fail result with an explanation.
+        # turn the list of rule checks into a single pass/fail result with an explanation
         results[program_key] = classify_program(program_key, checks)
     return results
 
 
 def childcare_checks(user: dict[str, object], childcare_limits: dict[int, int], state: str) -> list[RuleCheck]:
     """
-    Returns a list of rules to check for childcare subsidy eligibility.
-    Three rules:
-      1. Income must be under the state's childcare limit.
-      2. The parent/guardian must be working, studying, or in training.
-         (Looking for work is treated as "close" — not a hard fail.)
-      3. There must be a child under 13 in the household. (Critical — no child = instant Unlikely.)
+    returns a list of rules to check for childcare subsidy eligibility.
+    three rules:
+      1. income must be under the state's childcare limit.
+      2. the parent/guardian must be working, studying, or in training.
+         (looking for work is treated as close, meaning borderline, not a hard fail.)
+      3. there must be a child under 13 in the household. (critical: no child means instant unlikely.)
     """
-    # Get the income limit for this specific household size in this state.
+    # get the income limit for this specific household size in this state
     limit = limit_for_household(childcare_limits, int(user["household_size"]), extra_person_amount(state, "childcare"))
     income = float(user["monthly_income"])
-    # Check if the parent has a qualifying activity (work, school, or training).
+    # check if the parent has a qualifying activity (work, school, or training)
     working_or_studying = user["employment_status"] in {"Working", "In school or job training", "Working and in school"}
     return [
         income_check(income, limit, "Income is within the sample child-care limit"),
@@ -3849,46 +3793,46 @@ def childcare_checks(user: dict[str, object], childcare_limits: dict[int, int], 
             working_or_studying,
             "Parent or caregiver is working, in school, or in job training.",
             "Child-care programs usually require a parent to work, study, or train.",
-            close=user["employment_status"] == "Looking for work",  # "close" = not fully passing but borderline
+            close=user["employment_status"] == "Looking for work",  # looking for work is borderline, not a full pass
         ),
         RuleCheck(
             "Child age",
             bool(user["child_under_13"]),
             "A child in the household is under age 13.",
             "This sample child-care subsidy is focused on children under age 13.",
-            critical=True,  # critical=True means failing this alone causes "Unlikely" status
+            critical=True,  # critical means failing this one rule alone causes unlikely status
         ),
     ]
 
 
 def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
     """
-    Checks eligibility for two food assistance programs simultaneously:
+    checks eligibility for two food assistance programs at the same time.
 
-      SNAP (Supplemental Nutrition Assistance Program, a.k.a. food stamps):
-        - Income limit = 100% FPL × state's BBCE multiplier (e.g. 1.65 for Texas)
-        - Multiplier comes from SNAP_STATE_MULTIPLIERS; defaults to 2.00 for broad states
+      snap (supplemental nutrition assistance program, also known as food stamps):
+        income limit = 100% fpl times the state's bbce multiplier (for example 1.65 for texas)
+        multiplier comes from snap_state_multipliers and defaults to 2.00 for broad states
 
-      WIC (Women, Infants, and Children):
-        - Only checked if there's a child under 5 in the household
-        - Income limit = 100% FPL × 1.85 (fixed nationally at 185%)
+      wic (women, infants, and children):
+        only checked if there is a child under 5 in the household
+        income limit = 100% fpl times 1.85 (fixed nationally at 185%)
 
-    Alaska and Hawaii get their own higher FPL base tables because the federal
+    alaska and hawaii get their own higher fpl base tables because the federal
     government publishes separate poverty thresholds for those two states.
 
-    Returns a ProgramResult directly (skips the generic classify_program step)
-    because the dual-path logic and custom explanations don't fit the standard
-    RuleCheck model used by other programs.
+    returns a programresult directly (skips the generic classify_program step)
+    because the dual-path logic and custom explanations do not fit the standard
+    rulecheck model used by other programs.
     """
-    # Pull the four things we need from the user's form data.
+    # pull the four things we need from the user's form data
     household_size = int(user["household_size"])
     gross_income = float(user["monthly_income"])
-    has_child_under_5 = bool(user.get("child_under_5", False))  # defaults False for old drafts
+    has_child_under_5 = bool(user.get("child_under_5", False))  # defaults to false for old drafts
     resident = bool(user["resident"])
 
-    # Step 1: Pick the right FPL base table for this state.
-    # Alaska and Hawaii have higher FPL values published by HHS.
-    # Everyone else uses the standard continental US FPL table.
+    # step 1: pick the right fpl base table for this state
+    # alaska and hawaii have higher fpl values published by hhs
+    # everyone else uses the standard continental us fpl table
     if state == "Alaska":
         base_fpl = ALASKA_FPL_BASE
         extra_person = ALASKA_FPL_EXTRA_PERSON
@@ -3899,17 +3843,17 @@ def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
         base_fpl = FPL_100_LIMITS
         extra_person = FPL_BASE_EXTRA_PERSON_AMOUNTS["food"]
 
-    # Step 2: Look up the 100% FPL dollar amount for this household size.
-    # If the household is bigger than 8, extend the table by adding extra_person per head.
+    # step 2: look up the 100% fpl dollar amount for this household size
+    # if the household is bigger than 8, extend the table by adding extra_person per head
     fpl_100 = limit_for_household(base_fpl, household_size, extra_person)
 
-    # Step 3: Calculate the actual income limits for each program.
+    # step 3: calculate the actual income limits for each program
     snap_multiplier = SNAP_STATE_MULTIPLIERS.get(state, 2.00)  # 2.00 = 200% for broad states
-    snap_limit = fpl_100 * snap_multiplier   # e.g. $2,750 × 1.65 = $4,537 for TX family of 4
-    wic_limit = fpl_100 * 1.85              # e.g. $2,750 × 1.85 = $5,088 nationally
-    snap_pct = int(snap_multiplier * 100)    # e.g. 1.65 → 165 (used in explanation text)
+    snap_limit = fpl_100 * snap_multiplier   # e.g. 2750 times 1.65 = 4537 for a texas family of 4
+    wic_limit = fpl_100 * 1.85              # e.g. 2750 times 1.85 = 5088 nationally
+    snap_pct = int(snap_multiplier * 100)    # e.g. 1.65 becomes 165 (used in explanation text)
 
-    # Step 4: Residency is a hard requirement for both programs. Fail immediately if not met.
+    # step 4: residency is a hard requirement for both programs. fail immediately if not met.
     if not resident:
         return ProgramResult(
             status="Unlikely",
@@ -3918,29 +3862,29 @@ def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
             missed=["Food assistance often requires US residency or qualified non-citizen status."],
         )
 
-    # Step 5: Check both program paths independently.
+    # step 5: check both program paths independently
     snap_eligible = gross_income <= snap_limit
-    # WIC requires: child under 5 OR pregnant OR postpartum OR breastfeeding
+    # wic requires: child under 5 or pregnant or postpartum or breastfeeding
     has_wic_criterion = (
-        has_child_under_5 or 
-        user.get("pregnant", False) or 
-        user.get("postpartum", False) or 
+        has_child_under_5 or
+        user.get("pregnant", False) or
+        user.get("postpartum", False) or
         user.get("breastfeeding", False)
     )
     wic_eligible = has_wic_criterion and gross_income <= wic_limit
 
-    # Step 6: If they qualify for either (or both), return a Highly eligible result.
+    # step 6: if they qualify for either snap or wic (or both), return a highly eligible result
     if snap_eligible or wic_eligible:
-        # Build a list like ["SNAP (165% limit)", "WIC (185% limit)"]
+        # build a list like ["SNAP (165% limit)", "WIC (185% limit)"]
         programs_qualified = []
         if snap_eligible:
             programs_qualified.append(f"SNAP ({snap_pct}% limit)")
         if wic_eligible:
             programs_qualified.append("WIC (185% limit)")
-        qual_str = " and ".join(programs_qualified)  # e.g. "SNAP (165% limit) and WIC (185% limit)"
+        qual_str = " and ".join(programs_qualified)  # joins them with "and" if both qualify
         explanation = f"Eligible for {qual_str}."
-        # If income is above 100% FPL but still under the SNAP ceiling, warn that the
-        # actual SNAP benefit amount is calculated after deducting rent and childcare.
+        # if income is above 100% fpl but still under the snap ceiling, warn that the
+        # actual snap benefit amount is calculated after deducting rent and childcare
         if gross_income > fpl_100:
             explanation += " Note: Actual SNAP benefits depend on the Net Income Test (income minus rent/childcare)."
         return ProgramResult(
@@ -3953,10 +3897,10 @@ def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
             missed=[],
         )
 
-    # Step 7: Not eligible for either — check if they're "close" (within 15% of a limit).
-    # "Close" triggers "Partially eligible" instead of "Unlikely".
+    # step 7: not eligible for either. check if they are close (within 15% of a limit).
+    # being close triggers "partially eligible" instead of "unlikely"
     close = gross_income <= snap_limit * 1.15 or (has_wic_criterion and gross_income <= wic_limit * 1.15)
-    # Build a human-readable explanation of why they didn't qualify.
+    # build a plain english explanation of why they did not qualify
     reason = (
         f"Income is above the food assistance limits: {format_money(gross_income)}/month vs. "
         f"SNAP limit {format_money(snap_limit)} ({snap_pct}%)"
@@ -3974,13 +3918,13 @@ def food_eligibility(user: dict[str, object], state: str) -> ProgramResult:
 
 def utility_checks(user: dict[str, object], utility_limits: dict[int, int], state: str) -> list[RuleCheck]:
     """
-    Three rules for utility bill assistance:
-      1. Income must be under whichever is higher — the state limit or 150% FPL.
-      2. Household must report a bill hardship (past-due bill or shutoff notice).
-      3. Must be a US resident or qualified non-citizen. (Critical — instant Unlikely if not.)
+    three rules for utility bill assistance:
+      1. income must be under whichever is higher: the state limit or 150% fpl.
+      2. household must report a bill hardship (past-due bill or shutoff notice).
+      3. must be a us resident or qualified non-citizen. (critical: instant unlikely if not.)
     """
     household_size = int(user["household_size"])
-    # Use the higher of state limit vs. 150% FPL — see utility_eligibility_limit().
+    # use the higher of state limit vs. 150% fpl (see utility_eligibility_limit for details)
     limit = utility_eligibility_limit(utility_limits, household_size, state)
     income = float(user["monthly_income"])
     return [
@@ -4003,12 +3947,12 @@ def utility_checks(user: dict[str, object], utility_limits: dict[int, int], stat
 
 def internet_checks(user: dict[str, object], internet_limits: dict[int, int], state: str) -> list[RuleCheck]:
     """
-    Three rules for internet subsidy eligibility:
-      1. Income must be under 200% FPL (the same limit for all states).
-      2. Household must have a qualifying reason for needing internet (work, school, health, benefits).
-      3. Must be a US resident. (Critical — instant Unlikely if not.)
+    three rules for internet subsidy eligibility:
+      1. income must be under 200% fpl (the same limit for all states).
+      2. household must have a qualifying reason for needing internet (work, school, health, benefits).
+      3. must be a us resident. (critical: instant unlikely if not.)
     """
-    # Internet uses a federal uniform limit — same for all states (200% FPL).
+    # internet uses a federal uniform limit that is the same for all states (200% fpl)
     limit = limit_for_household(internet_limits, int(user["household_size"]), extra_person_amount(state, "internet"))
     income = float(user["monthly_income"])
     return [
@@ -4031,15 +3975,15 @@ def internet_checks(user: dict[str, object], internet_limits: dict[int, int], st
 
 def transportation_checks(user: dict[str, object], transportation_limits: dict[int, int], state: str) -> list[RuleCheck]:
     """
-    Three rules for transportation voucher eligibility:
-      1. Income must be under the state's transportation limit.
-      2. Household must report a transportation need (work, school, medical).
-      3. Applicant must have an active reason — working, studying, job-seeking, or a senior.
-         (Retired is treated as "close" — not a hard fail.)
+    three rules for transportation voucher eligibility:
+      1. income must be under the state's transportation limit.
+      2. household must report a transportation need (work, school, medical).
+      3. applicant must have an active reason: working, studying, job-seeking, or a senior.
+         (retired is treated as close, meaning borderline, not a hard fail.)
     """
     limit = limit_for_household(transportation_limits, int(user["household_size"]), extra_person_amount(state, "transportation"))
     income = float(user["monthly_income"])
-    # These statuses count as "actively needing" transportation assistance.
+    # these statuses count as actively needing transportation assistance
     active_status = user["employment_status"] in {
         "Working",
         "In school or job training",
@@ -4059,15 +4003,15 @@ def transportation_checks(user: dict[str, object], transportation_limits: dict[i
             active_status or user["age_range"] == "Senior",  # seniors qualify automatically
             "Applicant has a work, school, job-search, or senior mobility reason.",
             "Transportation vouchers usually need a work, school, job-search, medical, or senior mobility reason.",
-            close=user["employment_status"] == "Retired",  # retired is borderline — not a hard fail
+            close=user["employment_status"] == "Retired",  # retired is borderline, not a hard fail
         ),
     ]
 
 
 def income_check(income: float, limit: float, label: str) -> RuleCheck:
-    # Reusable helper that builds a standard income rule check.
-    # "close" is True if the income is within 15% above the limit — used to
-    # show "Partially eligible" instead of "Unlikely" when someone is nearly there.
+    # reusable helper that builds a standard income rule check
+    # close is true if the income is within 15% above the limit, used to
+    # show partially eligible instead of unlikely when someone is nearly there
     return RuleCheck(
         "Income",
         income <= limit,
@@ -4079,16 +4023,16 @@ def income_check(income: float, limit: float, label: str) -> RuleCheck:
 
 def classify_program(program_key: str, checks: list[RuleCheck]) -> ProgramResult:
     """
-    Takes the list of rule checks for a program and decides the overall status:
+    takes the list of rule checks for a program and decides the overall status.
 
-      "Highly eligible"    — passed every single rule
-      "Partially eligible" — failed 1–2 rules, but all failures are "close" (borderline)
-                             OR only one rule was failed at all
-      "Unlikely"           — failed a critical rule, OR failed too many rules to be borderline
+      "highly eligible"    means passed every single rule
+      "partially eligible" means failed 1 or 2 rules but all failures are borderline (close)
+                           or only one rule was failed at all
+      "unlikely"           means failed a critical rule or failed too many rules to be borderline
 
-    Then generates a plain-English explanation and bundles it all into a ProgramResult.
+    then generates a plain english explanation and bundles it all into a programresult.
     """
-    # Split checks into passed and failed lists.
+    # split checks into passed and failed lists
     passed = [check.pass_text for check in checks if check.passed]
     missed = [check.fail_text for check in checks if not check.passed]
     failures = [check for check in checks if not check.passed]
@@ -4096,16 +4040,16 @@ def classify_program(program_key: str, checks: list[RuleCheck]) -> ProgramResult
     close_failures = [check for check in failures if check.close]         # borderline failures
 
     if not failures:
-        # Passed everything — best possible result.
+        # passed everything, best possible result
         status = "Highly eligible"
     elif critical_failures:
-        # Any critical failure (e.g. no child under 13 for childcare) = Unlikely, no exceptions.
+        # any critical failure (for example no child under 13 for childcare) means unlikely with no exceptions
         status = "Unlikely"
     elif len(failures) <= 2 and (len(close_failures) == len(failures) or len(failures) == 1):
-        # Failed 1–2 rules, but all of them are borderline → worth showing a partial result.
+        # failed 1 or 2 rules but all of them are borderline so worth showing a partial result
         status = "Partially eligible"
     else:
-        # Too many failures or non-borderline failures → not looking good.
+        # too many failures or failures that are not borderline
         status = "Unlikely"
 
     explanation = plain_language_explanation(program_key, status, passed, missed)
@@ -4113,160 +4057,160 @@ def classify_program(program_key: str, checks: list[RuleCheck]) -> ProgramResult
 
 
 def plain_language_explanation(program_key: str, status: str, passed: list[str], missed: list[str]) -> str:
-    # Generates a single human-readable sentence summarizing the result.
-    # Food has its own custom explanation built inside food_eligibility(),
-    # so this function is only called for childcare, utility, internet, and transportation.
+    # generates a single plain english sentence summarizing the result.
+    # food has its own custom explanation built inside food_eligibility(),
+    # so this function is only called for childcare, utility, internet, and transportation
     program_name = PROGRAMS[program_key]["short_name"].lower()
     if status == "Highly eligible":
         return f"You likely qualify for {program_name} because the sample rules are all met."
     if status == "Partially eligible":
         return f"You may qualify for {program_name}, but one or two details need review. An office can confirm whether exceptions or alternate rules apply."
-    # Unlikely — lead with the primary reason they didn't qualify.
+    # unlikely: lead with the primary reason they did not qualify
     primary_reason = missed[0] if missed else "multiple sample rules were not met."
     return f"You may not qualify for {program_name} based on this estimate because {primary_reason}"
 
 
 def limit_for_household(table: dict[int, int], household_size: int, extra_person_amount: int) -> int:
     """
-    Looks up the income limit for a given household size from a table.
-    The tables only go up to 8 people. If the household is larger,
-    we extend the table by adding `extra_person_amount` for each person beyond 8.
+    looks up the income limit for a given household size from a table.
+    the tables only go up to 8 people. if the household is larger,
+    we extend the table by adding extra_person_amount for each person beyond 8.
 
-    Example: table has 8-person limit of $4,643. A 10-person household
-    would be: $4,643 + (2 × $473) = $5,589.
+    example: table has an 8-person limit of $4,643. a 10-person household
+    would be: $4,643 + (2 x $473) = $5,589.
     """
     if household_size in table:
         return table[household_size]
-    # Household is larger than the table — extend it.
+    # household is larger than the table so extend it
     largest = max(table)
     return table[largest] + (household_size - largest) * extra_person_amount
 
 
 def find_locations(user_data: dict[str, object], eligibility: dict[str, ProgramResult], radius_miles: float) -> list[dict[str, object]]:
     """
-    Find offices from the LOCATIONS list that:
-      1. Offer at least one program the user is eligible for (Highly or Partially)
-      2. Are within radius_miles of the user's ZIP/city
+    find offices from the locations list that:
+      1. offer at least one program the user is eligible for (highly or partially eligible)
+      2. are within radius_miles of the user's zip or city
 
-    Returns a list of dicts sorted by distance (closest first).
-    Each dict has: "location" (the raw LOCATIONS entry), "programs" (list of matching
-    program keys), "distance" (miles as float or None), "distance_text" (readable string).
+    returns a list of dicts sorted by distance (closest first).
+    each dict has: location (the raw locations entry), programs (list of matching
+    program keys), distance (miles as float or none), distance_text (readable string).
     """
-    # Build a set of program keys the user qualifies for — only those are worth showing offices for.
+    # build a set of program keys the user qualifies for. only those are worth showing offices for.
     eligible_programs = {
         key
         for key, result in eligibility.items()
-        if result.status in {"Highly eligible", "Partially eligible"}  # skip Unlikely results
+        if result.status in {"Highly eligible", "Partially eligible"}  # skip unlikely results
     }
 
-    # Try to get the user's (lat, lon) from their ZIP or city so we can measure distance.
+    # try to get the user's (lat, lon) from their zip or city so we can measure distance
     user_coord = resolve_user_coord(user_data)
     user_zip = user_data.get("zip")     # e.g. "94085"
     user_city = user_data.get("city")   # e.g. "sunnyvale"
     results = []
 
     for location in LOCATIONS:
-        # Only keep offices that offer at least one program the user qualifies for.
+        # only keep offices that offer at least one program the user qualifies for
         matching_programs = [key for key in location["programs"] if key in eligible_programs]
         if not matching_programs:
-            continue   # this office can't help — skip it
+            continue   # this office cannot help so skip it
 
-        # If the user wants healthy food only, skip food locations that aren't marked healthy.
+        # if the user wants healthy food only, skip food locations that are not marked healthy
         if user_data.get("healthy") and "food" in matching_programs and not location.get("healthy"):
             continue
 
-        # Get the office's (lat, lon) so we can measure how far it is.
+        # get the office's (lat, lon) so we can measure how far it is
         loc_coord = ZIP_COORDS.get(location["zip"])
-        # Compute distance in miles if we have both coordinates; otherwise None.
+        # compute distance in miles if we have both coordinates, otherwise none
         distance = miles_between(user_coord, loc_coord) if user_coord and loc_coord else None
-        # These are used as a fallback when we don't have coordinates.
+        # these are used as a fallback when we do not have coordinates
         same_zip = user_zip and user_zip == location["zip"]
         same_city = user_city and user_city == location["city"].lower()
 
         if distance is not None:
-            # We have real coordinates — only include if within the chosen radius.
+            # we have real coordinates so only include if within the chosen radius
             if distance > radius_miles:
                 continue   # too far away
         elif not (same_zip or same_city):
-            # No coordinates — only include if the ZIP or city matches exactly.
+            # no coordinates so only include if the zip or city matches exactly
             continue
 
         results.append(
             {
-                "location": location,               # the full office entry from LOCATIONS
+                "location": location,               # the full office entry from locations
                 "programs": matching_programs,      # which programs this office can help with
-                "distance": distance,               # float miles, or None if unknown
+                "distance": distance,               # float miles, or none if unknown
                 "distance_text": format_distance(distance, same_zip),  # e.g. "2.3 mi"
             }
         )
 
-    # Sort by distance first (9999 pushes unknowns to the bottom), then alphabetically by name.
+    # sort by distance first (9999 pushes unknowns to the bottom), then alphabetically by name
     results.sort(key=lambda item: (9999 if item["distance"] is None else item["distance"], item["location"]["name"].lower()))
     return results
 
 
 def resolve_user_coord(user_data: dict[str, object]) -> tuple[float, float] | None:
     """
-    Figure out the user's (latitude, longitude) from what they typed.
-    First tries to match by ZIP code, then by city name.
-    Returns None if neither is found in our coordinate tables.
+    figure out the user's (latitude, longitude) from what they typed.
+    first tries to match by zip code, then by city name.
+    returns none if neither is found in our coordinate tables.
     """
     user_zip = user_data.get("zip")
     if user_zip and user_zip in ZIP_COORDS:
-        # Found their ZIP in our table — use that coordinate directly.
+        # found their zip in our table so use that coordinate directly
         return ZIP_COORDS[str(user_zip)]
     city = user_data.get("city")
     if city and str(city).lower() in CITY_COORDS:
-        # Found their city — use the city's center coordinate.
+        # found their city so use the city's center coordinate
         return CITY_COORDS[str(city).lower()]
-    # Neither ZIP nor city matched — we can't place them on a map.
+    # neither zip nor city matched so we cannot place them on a map
     return None
 
 
 def miles_between(start: tuple[float, float] | None, end: tuple[float, float] | None) -> float | None:
     """
-    Calculate the straight-line distance in miles between two (lat, lon) points
-    using the Haversine formula. This is the standard way to get accurate
-    distances on a sphere (the Earth) from coordinates.
+    calculate the straight-line distance in miles between two (lat, lon) points
+    using the haversine formula. this is the standard way to get accurate
+    distances on a sphere (the earth) from coordinates.
 
-    Returns None if either coordinate is missing.
+    returns none if either coordinate is missing.
     """
     if not start or not end:
-        return None   # can't measure without both points
-    # Convert degrees → radians because Python's math functions expect radians.
+        return None   # cannot measure without both points
+    # convert degrees to radians because python's math functions expect radians
     lat1, lon1 = map(math.radians, start)
     lat2, lon2 = map(math.radians, end)
-    # Haversine formula — calculates the great-circle distance between two points.
+    # haversine formula calculates the shortest path distance between two points on a sphere
     dlat = lat2 - lat1   # difference in latitude
     dlon = lon2 - lon1   # difference in longitude
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return 3958.8 * c   # 3958.8 = Earth's radius in miles
+    return 3958.8 * c   # 3958.8 is the earth's radius in miles
 
 
 def format_distance(distance: float | None, same_zip: bool | None = False) -> str:
     """
-    Convert a raw mile distance into a human-friendly label for display.
-    Used in the location cards (e.g. "2.3 mi", "same ZIP", "nearby").
+    convert a raw mile distance into a human-friendly label for display.
+    used in the location cards (for example "2.3 mi", "same ZIP", "nearby").
     """
     if same_zip:
-        return "same ZIP"       # user and office share a ZIP — very close
+        return "same ZIP"       # user and office share a zip so they are very close
     if distance is None:
-        return "nearby"         # no coords available — just say nearby
+        return "nearby"         # no coords available so just say nearby
     if distance < 0.2:
-        return "same area"      # under a quarter mile — basically next door
+        return "same area"      # under a quarter mile, basically next door
     return f"{distance:.1f} mi"  # e.g. "4.7 mi"
 
 
 def format_money(value: float) -> str:
-    """Format a dollar amount with a $ sign and thousands comma. No cents.
-    Example: 1330.0 → "$1,330"   |   12750.5 → "$12,751"
+    """format a dollar amount with a dollar sign and thousands comma. no cents.
+    example: 1330.0 becomes "$1,330" and 12750.5 becomes "$12,751"
     """
     return f"${value:,.0f}"
 
 
 def append_case_history(
-    path: Path,                                    # path to the CSV file on disk
+    path: Path,                                    # path to the csv file on disk
     selected_programs: list[str],                  # which programs were checked
     user_data: dict[str, object],                  # the household's profile
     eligibility: dict[str, ProgramResult],         # the eligibility results
@@ -4274,20 +4218,20 @@ def append_case_history(
     radius: str,                                   # search radius in miles (as a string)
 ) -> None:
     """
-    Append one row to the case history CSV file.
+    append one row to the case history csv file.
 
-    Each row is a snapshot of a single screening session — who was screened,
-    which programs were checked, and what the results were. This lets staff
+    each row is a snapshot of a single screening session: who was screened,
+    which programs were checked, and what the results were. this lets staff
     review usage over time without storing any personally identifiable info.
 
-    The CSV is created automatically if it doesn't exist yet.
-    New rows are always appended (not overwritten) so history is never lost.
+    the csv is created automatically if it does not exist yet.
+    new rows are always appended (not overwritten) so history is never lost.
     """
-    # Check if the file already exists so we know whether to write the header row.
+    # check if the file already exists so we know whether to write the header row
     file_exists = path.exists()
-    # Open in append mode ("a") so existing rows are never overwritten.
+    # open in append mode so existing rows are never overwritten
     with path.open("a", newline="", encoding="utf-8") as file:
-        # DictWriter lets us write dicts as rows, using the fieldnames as column headers.
+        # dictwriter lets us write dicts as rows, using the fieldnames as column headers
         writer = csv.DictWriter(
             file,
             fieldnames=[
@@ -4295,7 +4239,7 @@ def append_case_history(
                 "selected_programs",  # which programs the user checked
                 "monthly_income",     # monthly gross income entered
                 "household_size",     # number of people in the household
-                "location",           # ZIP or city the user entered
+                "location",           # zip or city the user entered
                 "age_range",          # age group of the applicant
                 "employment_status",  # their employment situation
                 "radius_miles",       # how wide the office search was
@@ -4303,10 +4247,10 @@ def append_case_history(
                 "location_count",     # how many nearby offices were found
             ],
         )
-        # Only write the header once — when the file is brand new.
+        # only write the header once, when the file is brand new
         if not file_exists:
             writer.writeheader()
-        # Write one row for this session.
+        # write one row for this session
         writer.writerow(
             {
                 "timestamp": datetime.now().isoformat(timespec="seconds"),   # e.g. "2026-04-29T14:23:00"
@@ -4317,7 +4261,7 @@ def append_case_history(
                 "age_range": user_data["age_range"],                         # e.g. "Adult"
                 "employment_status": user_data["employment_status"],         # e.g. "Working"
                 "radius_miles": radius,                                      # e.g. "10"
-                # Compact summary of all results — e.g. "food: Highly eligible; utility: Unlikely"
+                # compact summary of all results, e.g. "food: Highly eligible; utility: Unlikely"
                 "eligibility": "; ".join(f"{key}: {result.status}" for key, result in eligibility.items()),
                 "location_count": len(locations),                            # e.g. 3
             }
@@ -4433,11 +4377,11 @@ def _html_checklist(items: list[str]) -> str:
 
 
 def _get_program_display_name(program_key: str, result: ProgramResult) -> str:
-    """Extract specific program names (SNAP/WIC, etc.) from eligibility result if available."""
+    """extract specific program names (snap/wic, etc.) from the eligibility result if available."""
     if program_key == "food" and result.passed:
         for passed_item in result.passed:
             if "qualifies for" in passed_item.lower():
-                # Extract program name from "Income qualifies for SNAP (165% limit)"
+                # extract program name from "Income qualifies for SNAP (165% limit)"
                 # or "Income qualifies for SNAP (165% limit) and WIC (185% limit)"
                 start_idx = passed_item.lower().find("qualifies for")
                 if start_idx != -1:
@@ -4459,14 +4403,27 @@ def build_draft_application(
     radius: str,
     session_id: str = "",
 ) -> str:
+    """build the complete html document for the printable draft application report.
+    takes the programs the user picked, the form answers, the eligibility results,
+    and the nearby offices list, then assembles them into a styled html page.
+    returns the finished html string which the app opens in the browser."""
+    # get the current date and time formatted like "May 15, 2026 at 02:30 PM"
     now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    # safely embed the applicant name into html so characters like < and & do not break the page
     applicant_name = html.escape(str(user_data.get("applicant_name", "")).strip() or "Applicant")
+    # pull the state the user selected on the form
     state = str(user_data.get("state", ""))
+    # format the monthly income as a dollar string like "$2,750"
     income_str = format_money(float(user_data["monthly_income"]))
+    # the number of people in the household
     household = user_data["household_size"]
+    # the zip code or city text the user typed
     location_input = user_data.get("location_input", "")
+    # the age range option the user selected (child, adult, or senior)
     age_range = user_data.get("age_range", "")
+    # the employment status option the user selected
     employment = user_data.get("employment_status", "")
+    # convert each boolean checkbox value into a readable "yes" or "no" string for the html
     resident = "Yes" if user_data.get("resident") else "No"
     child_u13 = "Yes" if user_data.get("child_under_13") else "No"
     child_u5 = "Yes" if user_data.get("child_under_5") else "No"
@@ -4474,7 +4431,7 @@ def build_draft_application(
     internet_need = "Yes" if user_data.get("internet_need") else "No"
     transport_need = "Yes" if user_data.get("transportation_need") else "No"
 
-    # ── summary pills row ─────────────────────────────────────────────────────
+    # build the summary row showing each program name and its eligibility status badge
     summary_pills = "".join(
         f'<div style="display:flex;align-items:center;gap:12px;padding:12px 0;'
         f'border-bottom:1px solid #f1f5f9;">'
@@ -4484,23 +4441,31 @@ def build_draft_application(
         for k in selected_programs
     )
 
-    # ── per-program detail sections ───────────────────────────────────────────
+    # build the detailed section for each program one at a time
     program_sections = ""
     for k in selected_programs:
+        # get the eligibility result object for this program
         result = eligibility[k]
+        # get the program metadata like its name and description
         prog = PROGRAMS[k]
+        # look up the badge colors for this status; fall back to neutral gray if not found
         bg, fg = _STATUS_BADGE.get(result.status, ("#e5e7eb", "#374151"))
+        # get the longer description text for this program if available
         description = _PROGRAM_DESCRIPTIONS.get(k, prog["description"])
+        # get the list of documents the user should bring for this program
         docs = _PROGRAM_DOCS.get(k, [])
 
+        # build an html list item for each rule the user passed (shown in green with a checkmark)
         passed_html = "".join(
             f'<li style="margin-bottom:6px;color:#065f46;">&#10003;&nbsp;{t}</li>'
             for t in result.passed
         )
+        # build an html list item for each rule the user missed (shown in amber with a warning icon)
         missed_html = "".join(
             f'<li style="margin-bottom:6px;color:#92400e;">&#9888;&nbsp;{t}</li>'
             for t in result.missed
         )
+        # only include the rules sections in the html if there is at least one item to show
         rules_html = ""
         if passed_html:
             rules_html += (
@@ -4547,17 +4512,21 @@ def build_draft_application(
         </div>
         """
 
-    # ── nearby offices ────────────────────────────────────────────────────────
+    # build the nearby offices section of the html report
     if locations:
+        # start with an empty string and append an html card for each office
         office_rows = ""
+        # cap the list at 10 offices so the page does not become too long
         for item in locations[:10]:
             loc = item["location"]
+            # build small blue pill chips showing which programs this office handles
             prog_tags = "".join(
                 f'<span style="display:inline-block;padding:2px 10px;border-radius:999px;'
                 f'background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:600;margin:2px;">'
                 f'{PROGRAMS[p]["short_name"]}</span>'
                 for p in item["programs"] if p in PROGRAMS
             )
+            # append this office as a single html card row: name, address, distance, and program chips
             office_rows += f"""
             <div style="padding:16px 0;border-bottom:1px solid #f1f5f9;">
               <div style="font-weight:700;color:#1e293b;font-size:15px;">{loc['name']}</div>
@@ -4568,6 +4537,7 @@ def build_draft_application(
               <div>{prog_tags}</div>
             </div>
             """
+        # wrap all the office rows inside a dark header card container
         offices_section = f"""
         <div style="background:#fff;border-radius:14px;border:1px solid #e2e8f0;
                     box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:28px;overflow:hidden;">
@@ -4582,10 +4552,12 @@ def build_draft_application(
         </div>
         """
     else:
+        # no offices were found so just show a short italicized message
         offices_section = (
             '<p style="color:#64748b;font-style:italic;">No offices found within the selected radius.</p>'
         )
 
+    # only show the session id line in the header if a session id was generated
     session_line = (
         f'<span style="color:#94a3b8;font-size:12px;">Session&nbsp;{session_id}&nbsp;&bull;&nbsp;</span>'
         if session_id else ""
@@ -4724,55 +4696,53 @@ def build_draft_application(
 
 
 def summarize_location_results(items: list[dict[str, object]]) -> str:
+    """build a one sentence summary of the closest matching office.
+    used in the status bar and copy summary feature.
+    returns a fallback message if the list is empty."""
+    # if no offices were found at all, say so and stop
     if not items:
         return "No matching offices found."
+    # grab the first item which is always the closest office after sorting by distance
     top = items[0]
     location = top["location"]
+    # join the short names of all programs this office handles into one comma separated string
     programs = ", ".join(PROGRAMS[key]["short_name"] for key in top["programs"])
-    return f"Closest match: {location['name']} ({top['distance_text']}) for {programs}."
-    if not items:
-        return "No matching offices found."
-    top = items[0]
-    location = top["location"]
-    programs = ", ".join(PROGRAMS[key]["short_name"] for key in top["programs"])
+    # build and return the final sentence
     return f"Closest match: {location['name']} ({top['distance_text']}) for {programs}."
 
 
 def clamp(value: int, low: int, high: int) -> int:
-    """Keep `value` between `low` and `high` (inclusive).
-    Example: clamp(150, 9, 22) → 22    |    clamp(5, 9, 22) → 9
-    Used mainly to keep font sizes from going crazy in accessibility mode.
+    """keep value between low and high (inclusive).
+    example: clamp(150, 9, 22) gives 22 and clamp(5, 9, 22) gives 9.
+    used mainly to keep font sizes from going out of range in accessibility mode.
     """
     return max(low, min(high, value))
 
 
 def safe_get_program_short_names(program_keys: list[str]) -> str:
-    """Turn a list of program keys into a comma-separated string of short names.
-    Skips any key that isn't in the PROGRAMS dict so unknown keys don't crash the app.
-    Example: ["food", "utility"] → "Food, Utilities"
+    """turn a list of program keys into a comma-separated string of short names.
+    skips any key that is not in the programs dict so unknown keys do not crash the app.
+    example: ["food", "utility"] becomes "Food, Utilities"
     """
     return ", ".join(PROGRAMS[key]["short_name"] for key in program_keys if key in PROGRAMS)
 
 
 def sanitize_location_text(text: str) -> str:
-    """Strip leading/trailing whitespace and collapse multiple spaces into one.
-    Example: "  San   Jose  " → "San Jose"
-    Used before displaying or saving location strings.
+    """strip leading/trailing whitespace and collapse multiple spaces into one.
+    example: "  San   Jose  " becomes "San Jose".
+    used before displaying or saving location strings.
     """
     return " ".join(text.strip().split())
 
 
-# ===========================================================================
-# ENTRY POINT
-# ---------------------------------------------------------------------------
-# Python only runs the code below if this file is executed directly
-# (e.g. `python BenefitBridge.py`). If the file is imported by another
-# script, this block is skipped — important for testing and packaging.
-# ===========================================================================
+# entry point section
+# python only runs the code below if this file is executed directly
+# (for example: python BenefitBridge.py). if the file is imported by another
+# script, this block is skipped, which is important for testing and packaging.
 if __name__ == "__main__":
-    # Create the main application window (which calls __init__ and builds the UI).
+    # create the main application window (which calls __init__ and builds the ui)
     app = BenefitBridgeApp()
-    # Hand control to Tk's event loop — this runs forever until the window is closed.
+    # hand control to tk's event loop, this runs forever until the window is closed
     app.mainloop()
 
 
