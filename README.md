@@ -95,7 +95,7 @@ Benefit Bridge is available as a standalone executable for **Windows** and **mac
 
 <div align="center">
 
-### ⚖️ Disclaimer
+### Disclaimer
 *Benefit Bridge provides estimates for preparation purposes only and does not constitute an official eligibility determination. Program rules, income limits, and required documents vary by state and funding year. Always verify requirements with the administering agency.*
 
 </div>
