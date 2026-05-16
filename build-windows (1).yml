@@ -1,0 +1,65 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pillow requests
+
+      - name: Download uszips.csv
+        run: |
+          python -c "
+          import requests, os
+          if not os.path.exists('uszips.csv'):
+              print('Downloading uszips.csv...')
+              r = requests.get('https://simplemaps.com/static/data/us-zips/1.90/basic/simplemaps_uszips_basicv1.90.zip', stream=True)
+              with open('uszips.zip', 'wb') as f:
+                  for chunk in r.iter_content(chunk_size=8192):
+                      f.write(chunk)
+              import zipfile
+              with zipfile.ZipFile('uszips.zip') as z:
+                  z.extractall('.')
+              os.rename('uszips.csv', 'uszips.csv') if os.path.exists('uszips.csv') else None
+              print('Done.')
+          else:
+              print('uszips.csv already present.')
+          "
+
+      - name: Convert icon to .ico
+        run: |
+          python -c "
+          from PIL import Image
+          img = Image.open('icon.icns')
+          img.save('icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+          "
+
+      - name: Build EXE
+        run: |
+          pyinstaller --noconsole --windowed --onefile `
+            --icon="icon.ico" `
+            --add-data "benefit_bridge_logo.png;." `
+            --add-data "locations.json;." `
+            --add-data "uszips.csv;." `
+            BenefitBridge.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BenefitBridge-Windows
+          path: dist/BenefitBridge.exe
