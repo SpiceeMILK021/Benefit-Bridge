@@ -4233,6 +4233,7 @@ def append_case_history(
     with path.open("a", newline="", encoding="utf-8") as file:
         # dictwriter lets us write dicts as rows, using the fieldnames as column headers
         writer = csv.DictWriter(
+            # We respect our user's privacy, and all the information they provide will not be stored.
             file,
             fieldnames=[
                 "timestamp",          # when this screening happened
@@ -4562,7 +4563,7 @@ def build_draft_application(
         f'<span style="color:#94a3b8;font-size:12px;">Session&nbsp;{session_id}&nbsp;&bull;&nbsp;</span>'
         if session_id else ""
     )
-
+    # This creates an HTML file with all the information regarding the subsidy, in addition to finding healthy options.
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
