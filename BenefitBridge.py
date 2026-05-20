@@ -10,7 +10,6 @@ import html         # for safely embedding user text inside html so special char
 import math         # for math operations like ceiling and square root
 import re           # for searching text with patterns (like finding a 5 digit zip code)
 import sys          # for checking runtime info like the frozen pyinstaller path
-import uuid         # for generating a random unique session id each time the app starts
 import webbrowser   # for opening a url in the user's default web browser (google maps links)
 import os           # for working with file paths and checking if files or folders exist
 
@@ -84,135 +83,6 @@ FAVORITES_FILE = APP_DIR / "benefit_bridge_favorites.json"
 EXPORT_DIR = APP_DIR / "exports"
 # the tagline that shows up in the header and about box
 BRAND_SLOGAN = "You're Closer Than You Think"
-
-# this dictionary maps every english string in the ui to its spanish translation
-# when the user switches to spanish mode, the app looks up each string here
-# if a string is not in here yet, the app just shows the original english text as a fallback
-SPANISH: dict[str, str] = {
-    "You're Closer Than You Think": "Estás más cerca de lo que crees",
-    "Progress": "Progreso",
-    "1. Choose subsidies": "1. Elegir subsidios",
-    "2. Household profile": "2. Perfil del hogar",
-    "3. Results & offices": "3. Resultados",
-    "Sample rules only — always confirm with the office before applying.": "Solo reglas de muestra — confirme siempre con la oficina antes de solicitar.",
-    "Back": "Atrás",
-    "Start over": "Comenzar de nuevo",
-    "Save draft": "Guardar borrador",
-    "Load draft": "Cargar borrador",
-    "Continue": "Continuar",
-    "Check Eligibility": "Verificar elegibilidad",
-    "Draft Application": "Borrador de solicitud",
-    "Welcome": "Bienvenido",
-    "Pick programs, answer one shared profile, then review eligibility, offices, and a printable packing list.": "Selecciona programas, responde un perfil y revisa elegibilidad, oficinas y lista de documentos.",
-    "Smart reuse": "Reutilización inteligente",
-    "One questionnaire powers every program you pick.": "Un cuestionario aplica a todos los programas que elijas.",
-    "Office radar": "Radar de oficinas",
-    "Distance-ranked sites — hundreds of demo ZIP codes statewide.": "Oficinas cercanas ordenadas por distancia.",
-    "Audit trail": "Historial de auditoría",
-    "CSV history + JSON export for handoff.": "Historial CSV + exportación JSON.",
-    "Which type of subsidy?": "¿Qué tipo de subsidio?",
-    "Choose one or more programs. Use Select all if you want a full scan.": "Elige uno o más programas.",
-    "Select all": "Seleccionar todo",
-    "Clear": "Limpiar",
-    "Suggest common bundle": "Sugerir paquete común",
-    "Child-care subsidy": "Subsidio de cuidado infantil",
-    "Child care": "Cuidado infantil",
-    "Help paying for licensed care while a parent works or studies.": "Ayuda para pagar el cuidado mientras un padre trabaja o estudia.",
-    "Food assistance / SNAP-like program": "Asistencia alimentaria / SNAP",
-    "Food": "Alimentos",
-    "Monthly grocery support for households under income limits.": "Apoyo mensual para víveres para hogares de bajos ingresos.",
-    "Utility bill help": "Ayuda con servicios básicos",
-    "Utilities": "Servicios",
-    "Energy, water, or emergency bill support.": "Apoyo para facturas de energía, agua o emergencias.",
-    "Internet subsidy": "Subsidio de internet",
-    "Internet": "Internet",
-    "Low-cost internet or digital access support.": "Apoyo para internet de bajo costo.",
-    "Other: transportation vouchers": "Vales de transporte",
-    "Transport": "Transporte",
-    "Transit passes or rides for work, school, or medical needs.": "Pases de tránsito para trabajo, escuela o citas médicas.",
-    "Quick eligibility snapshot": "Resumen rápido de elegibilidad",
-    "Typical income limits, family of 4": "Límites de ingresos para familia de 4",
-    "Household profile": "Perfil del hogar",
-    "Answer once — every selected program reuses this profile. You can go back and edit before running the check.": "Responde una vez — cada programa seleccionado usa este perfil.",
-    "Tip: enter any 5-digit ZIP from the expanded demo set (e.g. 95125, 94110, 90026, 92104, 95825, 93722, 92806) for distance math; cities still match by name.": "Consejo: ingresa un código postal de 5 dígitos para calcular distancias; las ciudades también funcionan por nombre.",
-    "Basic personal info": "Información personal básica",
-    "Name": "Nombre",
-    "Enter the applicant's full name.": "Ingrese el nombre completo del solicitante.",
-    "Income": "Ingresos",
-    "Enter monthly income, or yearly income and choose Yearly.": "Ingrese ingreso mensual, o anual y elija 'Anual'.",
-    "Household size": "Tamaño del hogar",
-    "Everyone who shares income and expenses.": "Todos los que comparten ingresos y gastos.",
-    "State": "Estado",
-    "Choose the state for your location.": "Elija el estado de su ubicación.",
-    "ZIP code": "Código postal",
-    "Used to find nearby offices in the sample dataset.": "Para encontrar oficinas cercanas.",
-    "Age range": "Rango de edad",
-    "Employment or school status": "Empleo o situación escolar",
-    "Program-specific details": "Detalles del programa",
-    "US resident or qualified non-citizen": "Residente de EE.UU. o no ciudadano calificado",
-    "Used by food, utility, and internet sample checks.": "Usado en verificaciones de alimentos, servicios e internet.",
-    "Are you specifically looking for food with high nutritional value?": "¿Busca específicamente alimentos de alto valor nutricional?",
-    "It is highly recommended that you select this.": "Se recomienda ampliamente seleccionar esto.",
-    "A child in the household is under age 13": "Un menor en el hogar tiene menos de 13 años",
-    "Used by the child-care subsidy check.": "Usado en la verificación de cuidado infantil.",
-    "A child in the household is under age 5 (WIC)": "Un menor en el hogar tiene menos de 5 años (WIC)",
-    "Used by the WIC food assistance check.": "Usado en la verificación WIC.",
-    "Pregnant (WIC)": "Embarazada (WIC)",
-    "Postpartum (within past 6 months, WIC)": "Postparto (últimos 6 meses, WIC)",
-    "Breastfeeding (WIC)": "Lactando (WIC)",
-    "Behind on utility bill or received a shutoff notice": "Atrasado en factura de servicios o recibió aviso de corte",
-    "Used by utility bill help.": "Usado en ayuda con servicios.",
-    "Need home internet for work, school, health, or benefits": "Necesita internet en casa para trabajo, escuela, salud o beneficios",
-    "Used by internet subsidy.": "Usado en el subsidio de internet.",
-    "Need transportation for work, school, or medical appointments": "Necesita transporte para trabajo, escuela o citas médicas",
-    "Used by transportation vouchers.": "Usado en los vales de transporte.",
-    "Selected programs": "Programas seleccionados",
-    "None yet": "Ninguno todavía",
-    "Results workspace": "Espacio de resultados",
-    "Estimates only — not a government decision. Use filters, what-if income, maps, and exports to prepare a real visit.": "Solo estimados — no es una decisión gubernamental. Use filtros, ingresos hipotéticos, mapas y exportaciones.",
-    "Highly eligible": "Muy elegible",
-    "Partially eligible": "Parcialmente elegible",
-    "Unlikely": "No probable",
-    "Not provided": "No proporcionado",
-    "Search radius": "Radio de búsqueda",
-    "Save CSV history": "Guardar historial CSV",
-    "Copy summary": "Copiar resumen",
-    "Print list": "Imprimir lista",
-    "Edit profile": "Editar perfil",
-    "What-if income (percent of the amount you entered — drag, then release to recalculate)": "Ingreso hipotético (porcentaje del monto ingresado — arrastra para recalcular)",
-    "Office list": "Lista de oficinas",
-    "Search": "Buscar",
-    "Sort by": "Ordenar por",
-    "Apply filter": "Aplicar filtro",
-    "Copy all addresses": "Copiar todas las direcciones",
-    "Show:": "Mostrar:",
-    "Favorites only ★": "Solo favoritos ★",
-    "Visit checklist (sample)": "Lista de documentos (ejemplo)",
-    "Bring originals when possible. Offices may ask for different items.": "Lleve originales cuando sea posible.",
-    "Eligibility detail": "Detalle de elegibilidad",
-    "Nearby offices": "Oficinas cercanas",
-    "No offices shown": "No hay oficinas",
-    "Offices appear only for programs marked Highly eligible or Partially eligible. Increase income scenario or adjust answers, then update the list.": "Las oficinas solo aparecen para programas marcados como elegibles.",
-    "No offices in radius": "Sin oficinas en el radio",
-    "Try a larger radius or a sample city such as Sunnyvale, San Jose, Oakland, Los Angeles, San Diego, or Sacramento.": "Prueba un radio más grande o una ciudad como Los Ángeles, Sacramento o San José.",
-    "No filter matches": "Sin coincidencias",
-    "Clear the office search box or type part of a name, city, or street.": "Limpia el campo de búsqueda o escribe parte del nombre, ciudad o calle.",
-    "Copy address": "Copiar dirección",
-    "Open in Maps": "Ver en Mapas",
-    "Directions": "Cómo llegar",
-    "☆ Save": "☆ Guardar",
-    "★ Saved": "★ Guardado",
-    "Rules met": "Reglas cumplidas",
-    "Needs review": "Necesita revisión",
-    "No change at {pct:.0f}% — all programs stay the same": "Sin cambios — todos los programas se mantienen igual",
-    "No offices": "Sin oficinas",
-    "No offices in current filter view.": "No hay oficinas en la vista actual.",
-    "Office list opened in browser — use your browser's Print function": "Lista de oficinas abierta en el navegador — use la función Imprimir",
-    "Ready": "Listo",
-    "Step 1 of 3": "Paso 1 de 3",
-    "Step 2 of 3": "Paso 2 de 3",
-    "Step 3 of 3": "Paso 3 de 3",
-}
 
 
 # section 2: the five assistance programs this app can check eligibility for
@@ -1750,44 +1620,6 @@ def load_logo():
 
 
 
-def default_settings() -> dict[str, object]:
-    """return the baseline settings used when the app runs for the first time or if the settings file was deleted.
-    font_scale: 0 means normal size; positive numbers make text bigger for accessibility.
-    reduce_motion: if true, skip the animated button pulse.
-    autosave_draft: if true, automatically save the form to disk whenever the user changes a field."""
-    return {"font_scale": 0, "reduce_motion": False, "autosave_draft": True}
-
-
-def load_settings() -> dict[str, object]:
-    """read user settings from disk and return them as a dictionary.
-    if the file does not exist yet we return the defaults (first run).
-    if the file is broken or unreadable we return the defaults (safe recovery).
-    if the file is valid we merge it with defaults so new settings keys always have a value."""
-    if not SETTINGS_FILE.exists():
-        return default_settings()   # first run, no settings file yet
-    try:
-        # read the file and parse it as a json dictionary
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        # start from the defaults so any keys added in a newer version of the app still get values
-        base = default_settings()
-        # only copy over keys that exist in both the file and the defaults to avoid stale or unknown keys
-        base.update({k: data[k] for k in base if k in data})
-        return base
-    except (json.JSONDecodeError, OSError):
-        # the file is corrupt, empty, or we do not have permission to read it; use defaults
-        return default_settings()
-
-
-def save_settings(data: dict[str, object]) -> None:
-    """write the settings dictionary to disk as nicely formatted json.
-    if the disk is full or the file is read only, we silently do nothing
-    so a settings save failure never crashes the app."""
-    try:
-        SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError:
-        pass   # something went wrong writing to disk; ignore it silently
-
-
 def _loc_key(location: dict) -> str:
     """build a stable unique string key for a location so we can store it in the favorites set."""
     return f"{location['name']}|{location['address']}"
@@ -1890,10 +1722,8 @@ class BenefitBridgeApp(tk.Tk):
         self.minsize(960, 700)       # prevent the user from shrinking below this size
         self.configure(bg=APP_BG)
 
-        # generate a random short id for this session so each run is identifiable in exports
-        self.session_id = uuid.uuid4().hex[:10].upper()
-        # load previously saved settings, or use the defaults if none exist
-        self._settings = load_settings()
+        # generate a short id for this session so each run is identifiable in exports
+        self.session_id = datetime.now().strftime("%Y%m%d%H%M%S")
         # the monthly income the user originally typed in, saved so the what if slider can calculate percentages
         self._baseline_monthly: float = 0.0
         # references to scheduled timer callbacks so we can cancel them if needed
@@ -1942,7 +1772,6 @@ class BenefitBridgeApp(tk.Tk):
         self.income_scenario_pct = tk.DoubleVar(value=100.0)     # the what if income slider value (100 = their actual income)
         self.prog_filter_vars: dict[str, tk.BooleanVar] = {k: tk.BooleanVar(value=True) for k in PROGRAMS}
         self.show_favorites_var = tk.BooleanVar(value=False)
-        self._lang: str = "en"                                   # current ui language: "en" for english or "es" for spanish
         self.favorite_keys: set[str] = self._load_favorites()
 
         # which step of the wizard is currently showing: 0, 1, or 2
@@ -1957,8 +1786,6 @@ class BenefitBridgeApp(tk.Tk):
         self._bind_shortcuts()
         # always start on step 0 (program picker); drafts are only loaded when the user explicitly clicks "load draft"
         self.show_step(0)
-        # start the live clock in the footer
-        self._tick_clock()
 
     def _configure_styles(self) -> None:
         """apply dark theme colors and fonts to tkinter's built in ttk widgets.
@@ -2013,15 +1840,8 @@ class BenefitBridgeApp(tk.Tk):
         self.option_add("*Dialog.background", APP_BG)
 
     def _font_size(self, base: int) -> int:
-        """calculate the actual font size to use by adding the user's accessibility offset to the base size.
-        we clamp the result between 9 and 22 so it never becomes unreadably small or absurdly huge."""
-        return int(clamp(base + int(self._settings.get("font_scale", 0)), 9, 22))
-
-    def _t(self, text: str) -> str:
-        """look up the spanish translation for text if the ui is in spanish mode; otherwise return the english text unchanged."""
-        if self._lang == "es":
-            return SPANISH.get(text, text)
-        return text
+        """calculate the actual font size to use; clamped between 9 and 22."""
+        return int(clamp(base, 9, 22))
 
     def _button(self, parent: tk.Widget, text: str, command, variant: str = "secondary") -> ModernButton:
         # convenience wrapper: create a modernbutton that automatically inherits the parent's background color
@@ -2122,22 +1942,15 @@ class BenefitBridgeApp(tk.Tk):
             font=(FONT_FAMILY, self._font_size(13), "bold"),
         ).pack(anchor="w", pady=(4, 0))
 
-        # the right side of the header holds the session id pill and the utility buttons
+        # the right side of the header holds the utility buttons
         right_header = tk.Frame(header, bg=HEADER_BG)
         right_header.pack(side="right", padx=20, pady=(18, 0))
-
-        # a pill badge showing the session id so each run is identifiable
-        PillLabel(right_header, f"Session {self.session_id}", "#0c1a2e", ACCENT, HEADER_BG).pack(side="right")
 
         # a row of small utility buttons along the top right
         tools = tk.Frame(right_header, bg=HEADER_BG)
         tools.pack(side="right", padx=(0, 8))
         self._button(tools, "Export JSON", self.action_export_json, "secondary").pack(side="left", padx=3)
-        self._button(tools, "Settings", self.action_settings, "ghost").pack(side="left", padx=3)
-        self._button(tools, "Shortcuts", self.action_shortcuts_dialog, "ghost").pack(side="left", padx=3)
         self._button(tools, "About", self.action_about, "ghost").pack(side="left", padx=3)
-        self._lang_btn = self._button(tools, "ES", self._toggle_lang, "accent")
-        self._lang_btn.pack(side="left", padx=3)
 
         # the body frame fills everything below the header
         body = tk.Frame(self, bg=APP_BG)
@@ -2157,20 +1970,6 @@ class BenefitBridgeApp(tk.Tk):
             item = tk.Label(self.rail, text=f"{number}. {label}", bg=RAIL_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(12)), padx=12, pady=11, anchor="w")
             item.pack(fill="x", padx=14, pady=3)
             self.step_labels.append(item)
-
-        # a small disclaimer text pinned to the very bottom of the rail
-        self._rail_hint = tk.Label(
-            self.rail,
-            text=f"{BRAND_SLOGAN}. Sample rules only — always confirm with the office before applying.",
-            wraplength=200,
-            justify="left",
-            bg=RAIL_BG,
-            fg=MUTED,
-            font=(FONT_FAMILY, self._font_size(10)),
-        )
-        self._rail_hint.pack(side="bottom", anchor="w", padx=20, pady=22)
-        # whenever the rail is resized we recalculate the disclaimer wrap width so it never overflows
-        self.rail.bind("<Configure>", self._rail_resize_hint)
 
         # the main content area fills everything to the right of the rail
         main = tk.Frame(body, bg=APP_BG)
@@ -2210,32 +2009,12 @@ class BenefitBridgeApp(tk.Tk):
             anchor="w",
         )
         self.footer_left.pack(side="left", padx=16, pady=6, fill="x", expand=True)
-        # the right side of the footer shows the current time and version number
-        self.footer_right = tk.Label(
-            footer,
-            text=f"v{APP_VERSION}",
-            bg=APP_BG_ELEVATED,
-            fg=MUTED,
-            font=(FONT_FAMILY, self._font_size(10)),
-            anchor="e",
-        )
-        self.footer_right.pack(side="right", padx=16, pady=6)
-
-    def _rail_resize_hint(self, event: tk.Event) -> None:
-        # whenever the rail width changes, update the disclaimer wrap width so the text never overflows
-        if event.widget == self.rail:
-            self._rail_hint.configure(wraplength=max(140, int(event.width) - 36))
+    def _rail_resize_hint(self, _event: tk.Event) -> None:
+        pass
 
     def _status(self, message: str) -> None:
         # update the message text shown on the left side of the footer bar
         self.footer_left.configure(text=message)
-
-    def _tick_clock(self) -> None:
-        # update the footer right label with the current time and version number
-        # lstrip("0") removes a leading zero so "01:23 pm" becomes "1:23 pm"
-        self.footer_right.configure(text=f"{datetime.now().strftime('%I:%M %p').lstrip('0')} · v{APP_VERSION}")
-        # schedule this same method to run again in 30 seconds
-        self.after(30_000, self._tick_clock)
 
     def _toast(self, message: str, ms: int = 2800) -> None:
         """show a temporary floating notification (a toast) that disappears after the given number of milliseconds.
@@ -2271,15 +2050,11 @@ class BenefitBridgeApp(tk.Tk):
         self.bind("<Control-e>", lambda _e: self.action_export_json())          # ctrl+e exports results as json
         self.bind("<Control-s>", lambda _e: self.action_save_draft_now())       # ctrl+s saves the current draft
         self.bind("<Control-q>", lambda _e: (self._write_draft(), self.destroy())) # ctrl+q saves draft then quits
-        self.bind("<F1>", lambda _e: self.action_shortcuts_dialog())             # f1 shows the shortcuts list
 
     def _schedule_draft_autosave(self) -> None:
         """schedule an autosave to happen about 1.8 seconds from now.
         if this is called again before the timer fires, the old timer is cancelled and a new one starts.
         this is called debouncing: while the user is typing we do not save constantly; we save once they pause."""
-        # do nothing if autosave was turned off in settings
-        if not self._settings.get("autosave_draft", True):
-            return
         # cancel any autosave that is already pending
         if self._draft_after:
             try:
@@ -2318,10 +2093,8 @@ class BenefitBridgeApp(tk.Tk):
             }
             # write the snapshot to the draft file as formatted json
             DRAFT_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            self._status("Draft saved locally")
         except OSError:
-            # the disk is full, the file is read only, or we do not have permission; show a message
-            self._status("Could not save draft (disk error)")
+            pass
 
     def _load_draft_if_present(self) -> bool:
         """read the saved draft from disk and refill the form with it.
@@ -2421,64 +2194,6 @@ class BenefitBridgeApp(tk.Tk):
             f"Session ID: {self.session_id}",
         )
 
-    def action_shortcuts_dialog(self) -> None:
-        # show a popup listing all the available keyboard shortcuts
-        messagebox.showinfo(
-            "Keyboard shortcuts",
-            "Ctrl+E — Export last results as JSON\n"
-            "Ctrl+S — Save draft now\n"
-            "Ctrl+Q — Quit (saves draft first)\n"
-            "F1 — This help\n",
-        )
-
-    def action_settings(self) -> None:
-        """open the settings popup window where the user can adjust font size, reduce motion, and toggle autosave."""
-        # toplevel creates a new window that is separate from but owned by the main window
-        win = tk.Toplevel(self)
-        win.title("Settings")
-        win.configure(bg=CARD_BG)
-        win.geometry("420x260")
-        # inner frame with padding so the content does not press against the window edges
-        body = tk.Frame(win, bg=CARD_BG, padx=22, pady=18)
-        body.pack(fill="both", expand=True)
-
-        # section heading
-        tk.Label(body, text="Accessibility & data", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, 14, "bold")).pack(anchor="w")
-
-        # row for the text size offset spinbox
-        scale_row = tk.Frame(body, bg=CARD_BG)
-        scale_row.pack(fill="x", pady=(14, 6))
-        tk.Label(scale_row, text="Text size offset", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, 11)).pack(side="left")
-        # a tkinter variable that holds the current font scale offset value
-        var = tk.IntVar(value=int(self._settings.get("font_scale", 0)))
-        # a spinbox is a number input with up and down arrow buttons; the allowed range is 2 below zero to 4 above zero
-        tk.Spinbox(scale_row, from_=-2, to=4, textvariable=var, width=6, bg=INPUT_BG, fg=TEXT, buttonbackground=BORDER).pack(side="right")
-
-        # checkbox for turning off button pulse animations
-        motion = tk.BooleanVar(value=bool(self._settings.get("reduce_motion", False)))
-        tk.Checkbutton(body, text="Reduce motion (disable button pulse)", variable=motion, bg=CARD_BG, fg=TEXT, selectcolor=INPUT_BG, activebackground=CARD_BG, activeforeground=TEXT).pack(anchor="w", pady=8)
-
-        # checkbox for toggling autosave while the user is filling out the form
-        autosave = tk.BooleanVar(value=bool(self._settings.get("autosave_draft", True)))
-        tk.Checkbutton(body, text="Autosave draft while you work", variable=autosave, bg=CARD_BG, fg=TEXT, selectcolor=INPUT_BG, activebackground=CARD_BG, activeforeground=TEXT).pack(anchor="w")
-
-        # inner function that runs when the save button is clicked inside this settings window
-        def save_and_close() -> None:
-            # read the current values from each variable and store them in the settings dict
-            self._settings["font_scale"] = int(var.get())
-            self._settings["reduce_motion"] = bool(motion.get())
-            self._settings["autosave_draft"] = bool(autosave.get())
-            # write the updated settings to disk
-            save_settings(self._settings)
-            # reapply styles immediately so any font size change takes effect right now
-            self._configure_styles()
-            self._status("Settings saved")
-            # close the settings window
-            win.destroy()
-
-        # the primary save button at the bottom right of the settings window
-        self._button(body, "Save", save_and_close, "primary").pack(anchor="e", pady=(18, 0))
-
     def _text_wrap(self) -> int:
         """calculate how wide in pixels a paragraph of text should wrap based on the current window size.
         we recalculate this each call so it adapts automatically when the window is resized."""
@@ -2518,19 +2233,19 @@ class BenefitBridgeApp(tk.Tk):
         if step == 0:
             self._build_program_screen()
             self.back_button.configure(state="disabled")
-            self.next_button.configure(text=self._t("Continue"))
+            self.next_button.configure(text="Continue")
         elif step == 1:
             self._build_info_screen()
             self.back_button.configure(state="normal")
-            self.next_button.configure(text=self._t("Check Eligibility"))
+            self.next_button.configure(text="Check Eligibility")
         else:
             self._build_results_screen()
             self.back_button.configure(state="normal")
-            self.next_button.configure(text=self._t("Draft Application"))
+            self.next_button.configure(text="Draft Application")
         # schedule an autosave shortly after the step loads
         self._schedule_draft_autosave()
         # update the footer to show which step the user is on
-        self._status(self._t(f"Step {step + 1} of 3"))
+        self._status(f"Step {step + 1} of 3")
 
     def _update_step_rail(self) -> None:
         """recolor the three step labels in the left rail to show the user's progress.
@@ -2549,10 +2264,10 @@ class BenefitBridgeApp(tk.Tk):
     def _build_program_screen(self) -> None:
         """build step 0 (the first screen): the program picker where the user chooses which benefits to check."""
         # large welcome heading at the top
-        ttk.Label(self._step_host, text=self._t("Welcome"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self._step_host, text="Welcome", style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
-            text=self._t("Pick programs, answer one shared profile, then review eligibility, offices, and a printable packing list."),
+            text="Pick programs, answer one shared profile, then review eligibility, offices, and a printable packing list.",
             bg=APP_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(12)),
@@ -2576,9 +2291,9 @@ class BenefitBridgeApp(tk.Tk):
             c.pack(side="left", fill="both", expand=False, padx=(0, 14))
             cb = self._surface(c)  # get the inner body frame of the rounded card
             # bold title label at the top of the chip
-            tk.Label(cb, text=self._t(label), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(13), "bold")).pack(anchor="w", padx=18, pady=(16, 6))
+            tk.Label(cb, text=label, bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(13), "bold")).pack(anchor="w", padx=18, pady=(16, 6))
             # description text below the title
-            tk.Label(cb, text=self._t(sub), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=chip_wrap, justify="left").pack(anchor="w", padx=18, pady=(0, 18))
+            tk.Label(cb, text=sub, bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=chip_wrap, justify="left").pack(anchor="w", padx=18, pady=(0, 18))
 
         # the main card where the user picks which programs to check
         card = self._card(self._step_host)
@@ -2586,11 +2301,11 @@ class BenefitBridgeApp(tk.Tk):
         card_body = self._surface(card)
 
         # heading inside the card
-        tk.Label(card_body, text=self._t("Which type of subsidy?"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(20), "bold")).pack(anchor="w", padx=24, pady=(24, 8))
+        tk.Label(card_body, text="Which type of subsidy?", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(20), "bold")).pack(anchor="w", padx=24, pady=(24, 8))
         # subtitle instruction text
         tk.Label(
             card_body,
-            text=self._t("Choose one or more programs. Use Select all if you want a full scan."),
+            text="Choose one or more programs. Use Select all if you want a full scan.",
             bg=CARD_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(11)),
@@ -2616,11 +2331,11 @@ class BenefitBridgeApp(tk.Tk):
             swatch.pack(side="left", fill="y", padx=(0, 14))
             swatch.pack_propagate(False)
             # the checkbox tied to the tkinter variable for this program
-            ModernCheckbox(head, text=self._t(program["name"]), variable=self.program_vars[key], bg=CARD_BG_HOVER, fg=TEXT).pack(side="left", anchor="nw", pady=(2, 0))
+            ModernCheckbox(head, text=program["name"], variable=self.program_vars[key], bg=CARD_BG_HOVER, fg=TEXT).pack(side="left", anchor="nw", pady=(2, 0))
             # the program description text shown below the checkbox row
             tk.Label(
                 inner,
-                text=self._t(program["description"]),
+                text=program["description"],
                 bg=CARD_BG_HOVER,
                 fg=SUBTEXT,
                 font=(FONT_FAMILY, self._font_size(11)),
@@ -2631,9 +2346,9 @@ class BenefitBridgeApp(tk.Tk):
         # action buttons at the bottom of the program picker card
         actions = tk.Frame(card_body, bg=CARD_BG)
         actions.pack(fill="x", padx=22, pady=(22, 26))
-        self._button(actions, self._t("Select all"), self.select_all_programs, "secondary").pack(side="left")
-        self._button(actions, self._t("Clear"), self.clear_programs, "ghost").pack(side="left", padx=10)
-        self._button(actions, self._t("Suggest common bundle"), self.suggest_program_bundle, "accent").pack(side="right")
+        self._button(actions, "Select all", self.select_all_programs, "secondary").pack(side="left")
+        self._button(actions, "Clear", self.clear_programs, "ghost").pack(side="left", padx=10)
+        self._button(actions, "Suggest common bundle", self.suggest_program_bundle, "accent").pack(side="right")
 
         # the quick eligibility estimator card showing income limits for a family of 4
         est_card = self._card(self._step_host)
@@ -2643,8 +2358,8 @@ class BenefitBridgeApp(tk.Tk):
         # look up the selected state's income limits (fall back to california if the state is not in the table)
         state_lims = STATE_LIMITS.get(state, STATE_LIMITS["California"])
         snap_mult = SNAP_STATE_MULTIPLIERS.get(state, 2.0)
-        tk.Label(eb, text=self._t("Quick eligibility snapshot"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(15), "bold")).pack(anchor="w", padx=22, pady=(20, 4))
-        tk.Label(eb, text=self._t("Typical income limits, family of 4") + f" · {state}", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=self._text_wrap() - 48, justify="left").pack(anchor="w", padx=22, pady=(0, 14))
+        tk.Label(eb, text="Quick eligibility snapshot", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(15), "bold")).pack(anchor="w", padx=22, pady=(20, 4))
+        tk.Label(eb, text="Typical income limits, family of 4" + f" · {state}", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=self._text_wrap() - 48, justify="left").pack(anchor="w", padx=22, pady=(0, 14))
         # the income limit rows for each program for a family of 4
         est_rows = [
             ("childcare",       state_lims.get("childcare", {}).get(4, 0)),
@@ -2661,37 +2376,23 @@ class BenefitBridgeApp(tk.Tk):
             swatch = tk.Frame(row, bg=prog["color"], width=10, height=18)
             swatch.pack(side="left", padx=(0, 10))
             swatch.pack_propagate(False)
-            tk.Label(row, text=self._t(prog["short_name"]), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(11)), width=14, anchor="w").pack(side="left")
+            tk.Label(row, text=prog["short_name"], bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(11)), width=14, anchor="w").pack(side="left")
             tk.Label(row, text=f"under ${limit:,.0f} / mo", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
         tk.Frame(eb, height=14, bg=CARD_BG).pack()
 
     def _build_info_screen(self) -> None:
         """build step 1: the household profile form where the user enters their information."""
         # large heading at the top of the form
-        ttk.Label(self._step_host, text=self._t("Household profile"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self._step_host, text="Household profile", style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
-            text=self._t("Answer once — every selected program reuses this profile. You can go back and edit before running the check."),
+            text="Answer once — every selected program reuses this profile. You can go back and edit before running the check.",
             bg=APP_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(12)),
             wraplength=self._text_wrap(),
             justify="left",
         ).pack(anchor="w", pady=(6, 16))
-
-        # a tip card reminding the user which zip codes work for distance calculations
-        tip = self._card(self._step_host)
-        tip.pack(fill="x", pady=(0, 12))
-        tb = self._surface(tip)
-        tk.Label(
-            tb,
-            text=self._t("Tip: enter any 5-digit ZIP from the expanded demo set (e.g. 95125, 94110, 90026, 92104, 95825, 93722, 92806) for distance math; cities still match by name."),
-            bg=CARD_BG,
-            fg=ACCENT,
-            font=(FONT_FAMILY, self._font_size(10)),
-            wraplength=self._text_wrap() - 36,
-            justify="left",
-        ).pack(anchor="w", padx=18, pady=14)
 
         # the form uses a two column layout: basic info on the left, program specific questions on the right
         wrapper = tk.Frame(self._step_host, bg=APP_BG)
@@ -2702,29 +2403,29 @@ class BenefitBridgeApp(tk.Tk):
         right.pack(side="left", fill="both", expand=True, padx=(12, 0))
 
         # left column: basic personal information fields
-        self._section_title(left, self._t("Basic personal info"))
+        self._section_title(left, "Basic personal info")
         # each _field_row builds a labeled input field; the lambda creates the widget inside the row
-        self._field_row(left, self._t("Name"), lambda row: self._entry(row, self.name_var), self._t("Enter the applicant's full name."))
-        self._field_row(left, self._t("Income"), lambda row: self._income_field(row), self._t("Enter monthly income, or yearly income and choose Yearly."))
-        self._field_row(left, self._t("Household size"), lambda row: self._spinbox(row, self.household_var, 1, 12), self._t("Everyone who shares income and expenses."))
-        self._field_row(left, self._t("State"), lambda row: self._combo(row, self.state_var, STATE_OPTIONS), self._t("Choose the state for your location."))
-        self._field_row(left, self._t("ZIP code"), lambda row: self._entry(row, self.location_var), self._t("Used to find nearby offices in the sample dataset."))
-        self._field_row(left, self._t("Age range"), lambda row: self._combo(row, self.age_var, AGE_OPTIONS), "")
+        self._field_row(left, "Name", lambda row: self._entry(row, self.name_var), "Enter the applicant's full name.")
+        self._field_row(left, "Income", lambda row: self._income_field(row), "Enter monthly income, or yearly income and choose Yearly.")
+        self._field_row(left, "Household size", lambda row: self._spinbox(row, self.household_var, 1, 12), "Everyone who shares income and expenses.")
+        self._field_row(left, "State", lambda row: self._combo(row, self.state_var, STATE_OPTIONS), "Choose the state for your location.")
+        self._field_row(left, "ZIP code", lambda row: self._entry(row, self.location_var), "Used to find nearby offices.")
+        self._field_row(left, "Age range", lambda row: self._combo(row, self.age_var, AGE_OPTIONS), "")
         # the employment field is placed at the top of the right column to continue the form flow
-        self._field_row(right, self._t("Employment or school status"), lambda row: self._combo(row, self.employment_var, EMPLOYMENT_OPTIONS), "")
+        self._field_row(right, "Employment or school status", lambda row: self._combo(row, self.employment_var, EMPLOYMENT_OPTIONS), "")
 
         # right column: yes or no questions specific to each program being checked
-        self._section_title(right, self._t("Program-specific details"))
-        self._check_row(right, self._t("US resident or qualified non-citizen"), self.residency_var, self._t("Used by food, utility, and internet sample checks."))
-        self._check_row(right, self._t("Are you specifically looking for food with high nutritional value?"), self.healthy_var, self._t("It is highly recommended that you select this."))
-        self._check_row(right, self._t("A child in the household is under age 13"), self.child_under_13_var, self._t("Used by the child-care subsidy check."))
-        self._check_row(right, self._t("A child in the household is under age 5 (WIC)"), self.child_under_5_var, self._t("Used by the WIC food assistance check."))
-        self._check_row(right, self._t("Pregnant (WIC)"), self.pregnant_var, self._t("Used by the WIC food assistance check."))
-        self._check_row(right, self._t("Postpartum (within past 6 months, WIC)"), self.postpartum_var, self._t("Used by the WIC food assistance check."))
-        self._check_row(right, self._t("Breastfeeding (WIC)"), self.breastfeeding_var, self._t("Used by the WIC food assistance check."))
-        self._check_row(right, self._t("Behind on utility bill or received a shutoff notice"), self.utility_hardship_var, self._t("Used by utility bill help."))
-        self._check_row(right, self._t("Need home internet for work, school, health, or benefits"), self.internet_need_var, self._t("Used by internet subsidy."))
-        self._check_row(right, self._t("Need transportation for work, school, or medical appointments"), self.transportation_need_var, self._t("Used by transportation vouchers."))
+        self._section_title(right, "Program-specific details")
+        self._check_row(right, "US resident or qualified non-citizen", self.residency_var, "Used by food, utility, and internet sample checks.")
+        self._check_row(right, "Are you specifically looking for food with high nutritional value?", self.healthy_var, "It is highly recommended that you select this.")
+        self._check_row(right, "A child in the household is under age 13", self.child_under_13_var, "Used by the child-care subsidy check.")
+        self._check_row(right, "A child in the household is under age 5 (WIC)", self.child_under_5_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Pregnant (WIC)", self.pregnant_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Postpartum (within past 6 months, WIC)", self.postpartum_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Breastfeeding (WIC)", self.breastfeeding_var, "Used by the WIC food assistance check.")
+        self._check_row(right, "Behind on utility bill or received a shutoff notice", self.utility_hardship_var, "Used by utility bill help.")
+        self._check_row(right, "Need home internet for work, school, health, or benefits", self.internet_need_var, "Used by internet subsidy.")
+        self._check_row(right, "Need transportation for work, school, or medical appointments", self.transportation_need_var, "Used by transportation vouchers.")
 
         # a summary card at the bottom showing which programs the user has selected
         # join the short names with commas for a compact readable list
@@ -2732,11 +2433,11 @@ class BenefitBridgeApp(tk.Tk):
         summary = self._card(self._step_host)
         summary.pack(fill="x", pady=(18, 0))
         summary_body = self._surface(summary)
-        tk.Label(summary_body, text=self._t("Selected programs"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(10), "bold")).pack(anchor="w", padx=18, pady=(14, 2))
+        tk.Label(summary_body, text="Selected programs", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(10), "bold")).pack(anchor="w", padx=18, pady=(14, 2))
         tk.Label(
             summary_body,
             # if no programs are selected yet show "none yet" instead of an empty string
-            text=selected_names or self._t("None yet"),
+            text=selected_names or "None yet",
             bg=CARD_BG,
             fg=TEXT,
             font=(FONT_FAMILY, self._font_size(12)),
@@ -2747,10 +2448,10 @@ class BenefitBridgeApp(tk.Tk):
     def _build_results_screen(self) -> None:
         """build step 2: the results workspace showing eligibility scores, office locations, and controls."""
         # large heading at the top
-        ttk.Label(self._step_host, text=self._t("Results workspace"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self._step_host, text="Results workspace", style="Title.TLabel").pack(anchor="w")
         tk.Label(
             self._step_host,
-            text=self._t("Estimates only — not a government decision. Use filters, what-if income, maps, and exports to prepare a real visit."),
+            text="Estimates only — not a government decision. Use filters, what-if income, maps, and exports to prepare a real visit.",
             bg=APP_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(12)),
@@ -2781,7 +2482,7 @@ class BenefitBridgeApp(tk.Tk):
             # the large number in the status color
             tk.Label(cell, text=value, bg=CARD_BG, fg=color, font=(FONT_FAMILY, self._font_size(26), "bold")).pack(anchor="w", pady=(0, 6))
             # smaller descriptive label below the number
-            tk.Label(cell, text=self._t(title), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=140, justify="left").pack(anchor="w")
+            tk.Label(cell, text=title, bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11)), wraplength=140, justify="left").pack(anchor="w")
 
         # the controls card holds the location, radius slider, action buttons, what if slider, and office search
         controls = self._card(self._step_host)
@@ -2794,7 +2495,7 @@ class BenefitBridgeApp(tk.Tk):
         loc_lbl = tk.Label(
             top,
             # if no location was set, show "not provided" as a friendly fallback
-            text=f"Location: {self.user_data.get('location_input', self._t('Not provided'))}",
+            text=f"Location: {self.user_data.get('location_input', 'Not provided')}",
             bg=CARD_BG,
             fg=TEXT,
             font=(FONT_FAMILY, self._font_size(13), "bold"),
@@ -2809,7 +2510,7 @@ class BenefitBridgeApp(tk.Tk):
         # the radius slider grouped with its label and value display
         rad_frame = tk.Frame(row_btns, bg=CARD_BG)
         rad_frame.pack(side="left")
-        tk.Label(rad_frame, text=self._t("Search radius"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
+        tk.Label(rad_frame, text="Search radius", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
         self._radius_lbl = tk.Label(rad_frame, text="10 mi", bg=CARD_BG, fg=ACCENT, font=(FONT_FAMILY, self._font_size(11), "bold"), width=6)
         self._radius_lbl.pack(side="left", padx=(0, 8))
         rad_slider = ttk.Scale(rad_frame, from_=5, to=100, variable=self._radius_dbl, orient="horizontal", length=160)
@@ -2830,17 +2531,17 @@ class BenefitBridgeApp(tk.Tk):
         rad_slider.bind("<Motion>", _rad_motion)
         rad_slider.bind("<ButtonRelease-1>", _rad_release)
         # the other action buttons that go in the same row as the radius slider
-        self._button(row_btns, self._t("Save CSV history"), self.save_case_history, "ghost").pack(side="left", padx=6)
-        self._button(row_btns, self._t("Copy summary"), self.copy_results_summary, "ghost").pack(side="left", padx=6)
-        self._button(row_btns, self._t("Print list"), self.print_office_list, "ghost").pack(side="left", padx=6)
-        self._button(row_btns, self._t("Edit profile"), lambda: self.show_step(1), "ghost").pack(side="right", padx=6)
+        self._button(row_btns, "Save CSV history", self.save_case_history, "ghost").pack(side="left", padx=6)
+        self._button(row_btns, "Copy summary", self.copy_results_summary, "ghost").pack(side="left", padx=6)
+        self._button(row_btns, "Print list", self.print_office_list, "ghost").pack(side="left", padx=6)
+        self._button(row_btns, "Edit profile", lambda: self.show_step(1), "ghost").pack(side="right", padx=6)
 
         # third row: the what if income slider lets the user ask "what if my income were higher or lower"
         mid = tk.Frame(controls_body, bg=CARD_BG)
         mid.pack(fill="x", padx=22, pady=(8, 18))
         tk.Label(
             mid,
-            text=self._t("What-if income (percent of the amount you entered — drag, then release to recalculate)"),
+            text="What-if income (percent of the amount you entered — drag, then release to recalculate)",
             bg=CARD_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(11)),
@@ -2890,11 +2591,11 @@ class BenefitBridgeApp(tk.Tk):
         # bottom row of the controls card: the office search box, sort dropdown, and filter checkboxes
         bot = tk.Frame(controls_body, bg=CARD_BG)
         bot.pack(fill="x", padx=22, pady=(4, 22))
-        tk.Label(bot, text=self._t("Office list"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(12), "bold")).pack(anchor="w", pady=(0, 10))
+        tk.Label(bot, text="Office list", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(12), "bold")).pack(anchor="w", pady=(0, 10))
         row_f = tk.Frame(bot, bg=CARD_BG)
         row_f.pack(fill="x", pady=(0, 8))
         # the search box for typing part of an office name, city, or street
-        tk.Label(row_f, text=self._t("Search"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
+        tk.Label(row_f, text="Search", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
         se = tk.Entry(
             row_f,
             textvariable=self.office_search_var,
@@ -2912,15 +2613,15 @@ class BenefitBridgeApp(tk.Tk):
         self._focus_ring(se)               # make the border glow accent color when focused
         se.pack(side="left", padx=(10, 20), ipady=8)
         # the dropdown to sort offices by distance or by name
-        tk.Label(row_f, text=self._t("Sort by"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
+        tk.Label(row_f, text="Sort by", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left")
         ttk.Combobox(row_f, values=("distance", "name"), width=11, state="readonly", textvariable=self.office_sort_var).pack(side="left", padx=(10, 14))
-        self._button(row_f, self._t("Apply filter"), self._office_filter_changed, "secondary").pack(side="left", padx=6)
-        self._button(row_f, self._t("Copy all addresses"), self.copy_all_office_addresses, "ghost").pack(side="right", padx=6)
+        self._button(row_f, "Apply filter", self._office_filter_changed, "secondary").pack(side="left", padx=6)
+        self._button(row_f, "Copy all addresses", self.copy_all_office_addresses, "ghost").pack(side="right", padx=6)
 
         # a row of per program filter checkboxes and the favorites only toggle
         prog_row = tk.Frame(bot, bg=CARD_BG)
         prog_row.pack(fill="x", pady=(0, 4))
-        tk.Label(prog_row, text=self._t("Show:"), bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
+        tk.Label(prog_row, text="Show:", bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(11))).pack(side="left", padx=(0, 8))
         for prog_key, prog in PROGRAMS.items():
             cb = ttk.Checkbutton(
                 prog_row,
@@ -2932,7 +2633,7 @@ class BenefitBridgeApp(tk.Tk):
         ttk.Separator(prog_row, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Checkbutton(
             prog_row,
-            text=self._t("Favorites only ★"),
+            text="Favorites only ★",
             variable=self.show_favorites_var,
             command=self._office_filter_changed,
         ).pack(side="left")
@@ -2941,10 +2642,10 @@ class BenefitBridgeApp(tk.Tk):
         docs = self._card(self._step_host)
         docs.pack(fill="x", pady=(0, 18))
         db = self._surface(docs)
-        tk.Label(db, text=self._t("Visit checklist (sample)"), bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(15), "bold")).pack(anchor="w", padx=22, pady=(20, 6))
+        tk.Label(db, text="Visit checklist (sample)", bg=CARD_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(15), "bold")).pack(anchor="w", padx=22, pady=(20, 6))
         tk.Label(
             db,
-            text=self._t("Bring originals when possible. Offices may ask for different items."),
+            text="Bring originals when possible. Offices may ask for different items.",
             bg=CARD_BG,
             fg=MUTED,
             font=(FONT_FAMILY, self._font_size(11)),
@@ -3024,7 +2725,7 @@ class BenefitBridgeApp(tk.Tk):
                     fg=SUCCESS if any("↑" in c for c in changes) else WARNING,
                 )
             else:
-                self._scenario_change_lbl.configure(text=self._t(f"No change at {pct:.0f}% — all programs stay the same"), fg=MUTED)
+                self._scenario_change_lbl.configure(text=f"No change at {pct:.0f}% — all programs stay the same", fg=MUTED)
         self.refresh_location_data()
         self._sync_location_view()
         self._render_eligibility_cards()
@@ -3090,7 +2791,7 @@ class BenefitBridgeApp(tk.Tk):
 
     def print_office_list(self) -> None:
         if not self._location_view:
-            messagebox.showwarning(self._t("No offices"), self._t("No offices in current filter view."))
+            messagebox.showwarning("No offices", "No offices in current filter view.")
             return
         EXPORT_DIR.mkdir(exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3134,31 +2835,13 @@ class BenefitBridgeApp(tk.Tk):
         )
         path.write_text(page, encoding="utf-8")
         webbrowser.open(path.as_uri())
-        self._toast(self._t("Office list opened in browser — use your browser's Print function"))
-
-    def _toggle_lang(self) -> None:
-        """switch the ui between english and spanish and rebuild the current step so all text updates."""
-        self._lang = "es" if self._lang == "en" else "en"
-        # update the language toggle button label to show the other language
-        self._lang_btn.configure(text="EN" if self._lang == "es" else "ES")
-        # update the persistent shell widgets (rail and nav buttons) that were built only once and not rebuilt on each step
-        step_keys = ["1. Choose subsidies", "2. Household profile", "3. Results & offices"]
-        for lbl, key in zip(self.step_labels, step_keys):
-            lbl.configure(text=self._t(key))
-        self.back_button.configure(text=self._t("Back"))
-        self._nav_startover_btn.configure(text=self._t("Start over"))
-        self._nav_savedraft_btn.configure(text=self._t("Save draft"))
-        self._nav_loaddraft_btn.configure(text=self._t("Load draft"))
-        hint_base = "Sample rules only — always confirm with the office before applying."
-        self._rail_hint.configure(text=f"{self._t(BRAND_SLOGAN)}. {self._t(hint_base)}")
-        # rebuild the current step so all its content translates to the new language
-        self.show_step(self.current_step)
+        self._toast("Office list opened in browser — use your browser's Print function")
 
     def _render_eligibility_cards(self) -> None:
         # clear the left panel and rebuild one card per selected program
         self._clear(self.results_frame.inner)
         wl = self._pane_text_wrap()
-        tk.Label(self.results_frame.inner, text=self._t("Eligibility detail"), bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
+        tk.Label(self.results_frame.inner, text="Eligibility detail", bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
         for program_key in self.selected_programs:
             program = PROGRAMS[program_key]
             result = self.eligibility[program_key]
@@ -3206,35 +2889,35 @@ class BenefitBridgeApp(tk.Tk):
             ).pack(anchor="w", padx=22, pady=(0, 14))
             # show the rules they met in green and the rules that need review in yellow
             if result.passed:
-                self._mini_list(card_body, self._t("Rules met"), result.passed, SUCCESS)
+                self._mini_list(card_body, "Rules met", result.passed, SUCCESS)
             if result.missed:
-                self._mini_list(card_body, self._t("Needs review"), result.missed, WARNING)
+                self._mini_list(card_body, "Needs review", result.missed, WARNING)
 
     def _render_location_cards(self) -> None:
         # clear the right panel and rebuild one card per visible office location
         self._clear(self.locations_frame.inner)
         wl = self._pane_text_wrap()
-        tk.Label(self.locations_frame.inner, text=self._t("Nearby offices"), bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
+        tk.Label(self.locations_frame.inner, text="Nearby offices", bg=APP_BG, fg=TEXT, font=(FONT_FAMILY, self._font_size(17), "bold")).pack(anchor="w", pady=(0, 16))
         eligible_keys = self.programs_for_locations()
         # if no programs are eligible, show a card explaining why no offices appear
         if not eligible_keys:
             self._empty_card(
                 self.locations_frame.inner,
-                self._t("No offices shown"),
-                self._t("Offices appear only for programs marked Highly eligible or Partially eligible. Increase income scenario or adjust answers, then update the list."),
+                "No offices shown",
+                "Offices appear only for programs marked Highly eligible or Partially eligible. Increase income scenario or adjust answers, then update the list.",
             )
             return
         # if there are eligible programs but no offices within the radius, show a helpful message
         if not self.location_results:
             self._empty_card(
                 self.locations_frame.inner,
-                self._t("No offices in radius"),
-                self._t("Try a larger radius or a sample city such as Sunnyvale, San Jose, Oakland, Los Angeles, San Diego, or Sacramento."),
+                "No offices in radius",
+                "Try a larger radius or a sample city such as Sunnyvale, San Jose, Oakland, Los Angeles, San Diego, or Sacramento.",
             )
             return
         # if there are offices but the filters removed them all, tell the user to clear the search
         if not self._location_view:
-            self._empty_card(self.locations_frame.inner, self._t("No filter matches"), self._t("Clear the office search box or type part of a name, city, or street."))
+            self._empty_card(self.locations_frame.inner, "No filter matches", "Clear the office search box or type part of a name, city, or street.")
             return
         # build one card per office in the current filtered and sorted view
         for item in self._location_view:
@@ -3286,12 +2969,12 @@ class BenefitBridgeApp(tk.Tk):
             actions.pack(fill="x", padx=22, pady=(0, 22))
             addr = str(location["address"])
             origin = str(self.user_data.get("location_input", ""))
-            self._button(actions, self._t("Copy address"), partial(copy_to_clipboard, self, addr), "secondary").pack(side="left", padx=(0, 6))
-            self._button(actions, self._t("Open in Maps"), partial(open_location_in_maps, _maps_query(location)), "ghost").pack(side="left", padx=(0, 6))
-            self._button(actions, self._t("Directions"), partial(open_directions_in_maps, _maps_query(location), origin), "ghost").pack(side="left")
+            self._button(actions, "Copy address", partial(copy_to_clipboard, self, addr), "secondary").pack(side="left", padx=(0, 6))
+            self._button(actions, "Open in Maps", partial(open_location_in_maps, _maps_query(location)), "ghost").pack(side="left", padx=(0, 6))
+            self._button(actions, "Directions", partial(open_directions_in_maps, _maps_query(location), origin), "ghost").pack(side="left")
             fav_key = _loc_key(location)
             # pick the star label based on whether this office is already saved as a favorite
-            star_label = self._t("★ Saved") if fav_key in self.favorite_keys else self._t("☆ Save")
+            star_label = "★ Saved" if fav_key in self.favorite_keys else "☆ Save"
             self._button(actions, star_label, partial(self._toggle_favorite, fav_key), "ghost").pack(side="right")
 
     def _mini_list(self, parent: tk.Widget, title: str, items: list[str], color: str) -> None:
@@ -3394,11 +3077,11 @@ class BenefitBridgeApp(tk.Tk):
         parent = self._surface(parent)
         row = tk.Frame(parent, bg=CARD_BG)
         row.pack(fill="x", padx=18, pady=12)
-        
+       
         # use the custom dark themed checkbox widget instead of the default system one
         checkbox = ModernCheckbox(row, text=label, variable=variable, bg=CARD_BG, fg=TEXT)
         checkbox.pack(anchor="w")
-        
+       
         if hint:
             tk.Label(row, text=hint, bg=CARD_BG, fg=MUTED, font=(FONT_FAMILY, self._font_size(9)), wraplength=max(220, self._text_wrap() // 2 - 40), justify="left").pack(anchor="w", padx=8, pady=(4, 0))
 
@@ -3566,7 +3249,6 @@ class BenefitBridgeApp(tk.Tk):
             self.eligibility,
             self.location_results,
             self.radius_var.get(),
-            self.session_id,
         )
         Path(path).write_text(html, encoding="utf-8")
         webbrowser.open(Path(path).as_uri())
@@ -4233,7 +3915,6 @@ def append_case_history(
     with path.open("a", newline="", encoding="utf-8") as file:
         # dictwriter lets us write dicts as rows, using the fieldnames as column headers
         writer = csv.DictWriter(
-            # We respect our user's privacy, and all the information they provide will not be stored.
             file,
             fieldnames=[
                 "timestamp",          # when this screening happened
@@ -4402,14 +4083,11 @@ def build_draft_application(
     eligibility: dict[str, ProgramResult],
     locations: list[dict[str, object]],
     radius: str,
-    session_id: str = "",
 ) -> str:
     """build the complete html document for the printable draft application report.
     takes the programs the user picked, the form answers, the eligibility results,
     and the nearby offices list, then assembles them into a styled html page.
     returns the finished html string which the app opens in the browser."""
-    # get the current date and time formatted like "May 15, 2026 at 02:30 PM"
-    now = datetime.now().strftime("%B %d, %Y at %I:%M %p")
     # safely embed the applicant name into html so characters like < and & do not break the page
     applicant_name = html.escape(str(user_data.get("applicant_name", "")).strip() or "Applicant")
     # pull the state the user selected on the form
@@ -4505,7 +4183,7 @@ def build_draft_application(
             <!-- checklist -->
             <div style="margin-top:24px;padding-top:20px;border-top:1px solid #f1f5f9;">
               <p style="font-weight:700;color:#1e293b;font-size:15px;margin:0 0 14px;">
-                &#128203;&nbsp;Documents to bring
+                Documents to bring
               </p>
               {_html_checklist(docs)}
             </div>
@@ -4532,7 +4210,7 @@ def build_draft_application(
             <div style="padding:16px 0;border-bottom:1px solid #f1f5f9;">
               <div style="font-weight:700;color:#1e293b;font-size:15px;">{loc['name']}</div>
               <div style="color:#64748b;margin:4px 0 8px;font-size:13px;">
-                &#128205;&nbsp;{loc['address']}&nbsp;&nbsp;
+                {loc['address']}&nbsp;&nbsp;
                 <span style="color:#94a3b8;">({item['distance_text']})</span>
               </div>
               <div>{prog_tags}</div>
@@ -4558,12 +4236,6 @@ def build_draft_application(
             '<p style="color:#64748b;font-style:italic;">No offices found within the selected radius.</p>'
         )
 
-    # only show the session id line in the header if a session id was generated
-    session_line = (
-        f'<span style="color:#94a3b8;font-size:12px;">Session&nbsp;{session_id}&nbsp;&bull;&nbsp;</span>'
-        if session_id else ""
-    )
-    # This creates an HTML file with all the information regarding the subsidy, in addition to finding healthy options.
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4605,9 +4277,6 @@ def build_draft_application(
     <h1 style="margin:0 0 8px;font-size:32px;font-weight:800;letter-spacing:-.5px;">
       {applicant_name}'s preparation aid
     </h1>
-    <p style="margin:0;color:#94a3b8;font-size:14px;">
-      {session_line}Generated {now}
-    </p>
     <div style="margin-top:24px;padding-top:20px;border-top:1px solid rgba(255,255,255,.1);
                 font-size:13px;color:#cbd5e1;">
       This document is a preparation aid — not an official application. Bring it and the
@@ -4687,8 +4356,7 @@ def build_draft_application(
     <strong style="color:#64748b;">Benefit Bridge</strong> &bull;
     These estimates are for preparation purposes only and do not constitute an official
     eligibility determination. Program rules, income limits, and required documents vary
-    by state, county, and funding year. Always verify requirements with the administering agency.<br/>
-    Generated {now}
+    by state, county, and funding year. Always verify requirements with the administering agency.
   </div>
 
 </div>
@@ -4745,5 +4413,4 @@ if __name__ == "__main__":
     app = BenefitBridgeApp()
     # hand control to tk's event loop, this runs forever until the window is closed
     app.mainloop()
-
 
